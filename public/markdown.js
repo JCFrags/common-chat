@@ -104,7 +104,7 @@ md.renderer.rules.fence = (tokens, i, options, env) => {
   if (name === 'mermaid') {
     const problem = diagramProblem(source) ?? (++env.diagrams > RENDER_LIMITS.diagrams ? 'Diagram count limit exceeded.' : null);
     const note = problem ?? (env.streaming ? 'Diagram rendering waits until the response ends.' : !closed ? 'Incomplete Mermaid fence.' : 'Rendering diagram...');
-    return `<div class="code-block diagram-block"${!problem && closed && !env.streaming ? ` data-diagram-source="${escape(source)}"` : ''}><div class="code-toolbar"><span>Mermaid</span>${copy}</div><p class="render-note" data-diagram-status>${escape(note)}</p><div class="diagram-output"></div><details class="diagram-source"${problem || !closed || env.streaming ? ' open' : ''}><summary>Diagram source</summary>${plain}</details></div>\n`;
+    return `<div class="code-block diagram-block"${!problem && closed && !env.streaming ? ' data-diagram-source=""' : ''}><div class="code-toolbar"><span>Mermaid</span>${copy}</div><p class="render-note" data-diagram-status>${escape(note)}</p><div class="diagram-output"></div><details class="diagram-source"${problem || !closed || env.streaming ? ' open' : ''}><summary>Diagram source</summary>${plain}</details></div>\n`;
   }
   let rendered = escape(source), note = !closed ? 'Incomplete code fence.' : '';
   if (source.length > RENDER_LIMITS.code) note = 'Highlighting size limit exceeded. Source is shown.';

@@ -7,6 +7,8 @@ test('Rich rendering supports nested tasks, math, highlighted code, safe diagram
   const rich = markdown('# Heading\n\n- [x] done\n  - nested **bold** and ~~deleted~~\n\n> quote\n> second\n\n| A | B |\n| :--- | ---: |\n| one | two |\n\nInline $x^2$ and \\(y_1\\).\n\n$$\\frac{1}{2}$$\n\n\\[\nz^2\n\\]\n\n```python\ndef example():\n  return 42\n```\n\n```mermaid\nflowchart LR\nA-->B\n```');
   for (const part of ['<h1>', 'task-checkbox', 'checked', '<ul>', '<blockquote>', '<s>', '<table>', 'align-right', '<math', 'math-block', 'hljs-keyword', 'data-code-copy', 'data-diagram-source']) assert(rich.includes(part), part);
   assert(!rich.includes('style='));
+  assert(rich.includes('data-diagram-source=""'));
+  assert(rich.includes('A--&gt;B')); // Source stays in code text, not an XML-sensitive attribute.
   assert(!markdown('```mermaid\nflowchart LR\nA-->B\n```', { streaming: true }).includes('data-diagram-source='));
   assert(!markdown('```mermaid\nflowchart LR\nA-->B').includes('data-diagram-source='));
   assert(markdown('$\\unknown{bad}$').includes('Math not rendered'));

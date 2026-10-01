@@ -55,7 +55,8 @@ export function renderDiagrams(root, onRendered = () => {}) {
   serial = serial.catch(() => {}).then(async () => {
     for (const block of blocks.slice(0, 8)) {
       if (current !== generation || !block.isConnected || !root.contains(block)) return;
-      const source = block.dataset.diagramSource, status = block.querySelector('[data-diagram-status]');
+      // Read visible source text. XML-safe sanitizers remove attributes that contain arrows.
+      const source = block.querySelector('.diagram-source code').textContent, status = block.querySelector('[data-diagram-status]');
       let stage;
       try {
         const problem = diagramProblem(source); if (problem) throw new Error(problem);
