@@ -19,6 +19,21 @@ The start command reads `.env` when that file exists. Ordinary environment varia
 
 The data directory must belong to one server process. This release uses a process lock and SQLite. It does not support multiple replicas or shared network storage.
 
+## Trusted-local deployment
+
+The home-server deployment adds an opt-in `CHAT_TRUSTED_LOCAL=true` mode. The default mode still requires a password.
+
+WARNING
+
+Trusted-local mode has no application login. Every allowed client can read all conversations, change connections, and use saved API keys. HTTP also exposes conversation content on the local network. Do not publish this deployment to the internet.
+
+1. Set `CHAT_TRUSTED_LOCAL=true` and an exact `PUBLIC_URL`.
+2. Keep `HOST=127.0.0.1`. The application rejects non-loopback listeners and requests in this mode.
+3. Use a reverse proxy that preserves Host and restricts source addresses to the trusted LAN and personal VPN.
+4. Do not trust a client-supplied `X-Forwarded-For` header for access control.
+
+The interface opens directly and hides "Sign out". Host validation, Origin validation, and same-origin JSON mutation headers remain required. The database retains an inaccessible random password hash for account compatibility. No initial password is printed in this mode.
+
 ## Docker Compose
 
 WARNING

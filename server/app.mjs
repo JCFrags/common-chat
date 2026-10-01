@@ -25,9 +25,15 @@ export async function createApp(options = {}) {
       if (!['http:', 'https:'].includes(publicUrl.protocol) || publicUrl.pathname !== '/' || publicUrl.search || publicUrl.hash || publicUrl.username || publicUrl.password) throw new Error();
     }
   } catch { store.close(); throw new Error('PUBLIC_URL must be an HTTP or HTTPS origin without a path or credentials.'); }
+  // Trusted-local access requires a loopback listener and a restricted reverse proxy.
+  const trustedLocal = options.trustedLocal ?? process.env.CHAT_TRUSTED_LOCAL === 'true';
+  if (trustedLocal && !publicUrl) { store.close(); throw new Error('Trusted-local access requires an explicit PUBLIC_URL.'); }
   const auth = new Auth(store, publicUrl?.protocol === 'https:');
   let bootstrapPassword;
-  try { bootstrapPassword = await auth.initialize(options.password ?? process.env.CHAT_PASSWORD); }
+  try {
+    const initialPassword = await auth.initialize(options.password ?? process.env.CHAT_PASSWORD);
+    if (!trustedLocal) bootstrapPassword = initialPassword;
+  }
   catch (e) { store.close(); throw e; }
   const subscribers = new Set();
   const emit = event => {
@@ -59,6 +65,7 @@ export async function createApp(options = {}) {
     if (publicUrl?.protocol === 'https:') res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     try {
       checkHost(req);
+      if (trustedLocal && !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) fail(403, 'Trusted-local access requires a loopback reverse proxy.');
       const url = new URL(req.url, 'http://internal'), path = url.pathname, method = req.method;
       if (method === 'GET' && path === '/healthz') { send(res, { status: 'ok' }); return; }
       if (method === 'GET' && assets.has(path)) {
@@ -71,14 +78,16 @@ export async function createApp(options = {}) {
         if (req.headers['x-chat-request'] !== '1' || !/^application\/json(?:;|$)/i.test(req.headers['content-type'] ?? '')) fail(403, 'A same-origin JSON request is required.');
       }
       if (path === '/api/login' && method === 'POST') {
+        if (trustedLocal) { send(res, { authenticated: true }); return; }
         const input = await body(req, 4096), token = await auth.login(req, input.password);
         res.setHeader('Set-Cookie', auth.cookie(token)); send(res, { authenticated: true }); return;
       }
-      const tokenHash = auth.require(req);
+      const tokenHash = trustedLocal ? null : auth.require(req);
       if (path === '/api/session' && method === 'GET') {
-        send(res, { authenticated: true, account: 'owner', settings: JSON.parse(store.get('SELECT settings FROM account WHERE id=1').settings), version: '0.1.0' }); return;
+        send(res, { authenticated: true, authenticationRequired: !trustedLocal, account: 'owner', settings: JSON.parse(store.get('SELECT settings FROM account WHERE id=1').settings), version: '0.1.0' }); return;
       }
       if (path === '/api/logout' && method === 'POST') {
+        if (trustedLocal) { send(res, { authenticated: true }); return; }
         store.run('DELETE FROM sessions WHERE token_hash=?', tokenHash);
         for (const s of subscribers) if (s.tokenHash === tokenHash) { s.res.end(); subscribers.delete(s); }
         res.setHeader('Set-Cookie', auth.cookie('', 0)); send(res, { authenticated: false }); return;
@@ -99,8 +108,8 @@ export async function createApp(options = {}) {
         res.write(`retry: 1500\ndata: ${JSON.stringify({ type: 'hello' })}\n\n`);
         const subscriber = { res, tokenHash }; subscribers.add(subscriber);
         const heartbeat = setInterval(() => {
-          const session = store.get('SELECT expires FROM sessions WHERE token_hash=?', tokenHash);
-          if (!session || session.expires <= now()) res.end();
+          const session = trustedLocal ? null : store.get('SELECT expires FROM sessions WHERE token_hash=?', tokenHash);
+          if (!trustedLocal && (!session || session.expires <= now())) res.end();
           else res.write(': heartbeat\n\n');
         }, 15000);
         res.on('close', () => { clearInterval(heartbeat); subscribers.delete(subscriber); });
@@ -217,6 +226,7 @@ export async function createApp(options = {}) {
   return {
     server, store, auth, generations, bootstrapPassword,
     async listen(port = 3000, host = '127.0.0.1') {
+      if (trustedLocal && !['127.0.0.1', 'localhost', '::1'].includes(host)) throw new Error('Trusted-local access must listen on loopback only.');
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
       const address = host === '0.0.0.0' ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host;
       return `http://${address}:${server.address().port}`;

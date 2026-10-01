@@ -404,6 +404,7 @@ async function boot() {
   try {
     const session = await api('/api/session'); state.preferences = session.settings; state.authenticated = true;
     applyTheme(); $('#login-screen').hidden = true; $('#app').hidden = false;
+    $('#logout').hidden = session.authenticationRequired === false;
     await Promise.all([refreshList(), refreshProviders()]); await loadModels(false);
     if (routeId()) await navigate(routeId()); else renderThread();
     connectEvents();
