@@ -2,9 +2,10 @@ import { readFileSync } from 'node:fs';
 
 // This policy applies only to the preview document, never to the chat interface.
 export const SANDBOX_FLAGS = 'allow-scripts allow-forms allow-modals allow-downloads allow-popups';
-export function sandboxPolicy(origin, external = false) {
+export function sandboxPolicy(origin, external = false, automatic = false) {
   const network = external ? ' http: https:' : '';
-  return `default-src 'none'; sandbox ${SANDBOX_FLAGS}; script-src 'unsafe-inline' 'unsafe-eval' blob: data: ${origin}/sandbox-mermaid.js${network}; style-src 'unsafe-inline' blob: data:${network}; img-src blob: data:${network}; font-src blob: data:${network}; media-src blob: data:${network}; connect-src ${external ? 'http: https: ws: wss:' : "'none'"}; frame-src blob: data:${network}; worker-src blob: data:; object-src 'none'; base-uri 'none'; form-action ${external ? 'http: https:' : "'none'"}; frame-ancestors ${origin}`;
+  const flags = automatic ? 'allow-scripts' : SANDBOX_FLAGS;
+  return `default-src 'none'; sandbox ${flags}; script-src 'unsafe-inline' 'unsafe-eval' blob: data: ${origin}/sandbox-mermaid.js${network}; style-src 'unsafe-inline' blob: data:${network}; img-src blob: data:${network}; font-src blob: data:${network}; media-src blob: data:${network}; connect-src ${external ? 'http: https: ws: wss:' : "'none'"}; frame-src blob: data:${network}; worker-src blob: data:; object-src 'none'; base-uri 'none'; form-action ${external ? 'http: https:' : "'none'"}; frame-ancestors ${origin}`;
 }
 export function sandboxDocument() {
   const bootstrap = readFileSync(new URL('../public/sandbox-runner.js', import.meta.url), 'utf8');

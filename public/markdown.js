@@ -91,16 +91,26 @@ md.renderer.rules.math_block = (tokens, i, options, env) => mathHtml(tokens[i].c
 export function diagramProblem(source) {
   return normalizeDiagram(source).problem;
 }
+export function fencePresentation(info, source) {
+  const [language = '', ...flags] = info.trim().toLowerCase().split(/\s+/);
+  const name = language.slice(0, 80);
+  const intent = flags.some(flag => ['example', 'source'].includes(flag)) ? 'example' : flags.some(flag => ['preview', 'run', 'artifact'].includes(flag)) ? 'artifact' : 'auto';
+  const supported = ['html', 'htm', 'xml', 'svg', 'css', 'js', 'javascript', 'mjs', 'cjs', 'mermaid'].includes(name);
+  const document = ['html', 'htm', 'xml', 'svg'].includes(name) && (/^\s*(?:<!doctype\s+html\b|<html\b)/i.test(source) || /^\s*(?:<\?xml[^>]*>\s*)?<svg\b(?:[^>]*\/>|[\s\S]*<\/svg>)\s*$/i.test(source));
+  const view = supported && intent !== 'example' && (intent === 'artifact' || name === 'mermaid' || document) ? 'artifact' : 'source';
+  return { name, intent, view };
+}
 md.renderer.rules.fence = (tokens, i, options, env) => {
-  const token = tokens[i], source = token.content.replace(/\n$/, ''), name = token.info.trim().split(/\s+/)[0].slice(0, 80).toLowerCase();
+  const token = tokens[i], source = token.content.replace(/\n$/, ''), { name, intent, view } = fencePresentation(token.info, source);
   const last = token.map ? env.lines[token.map[1] - 1] ?? '' : '';
   const closed = new RegExp(`^\\s*${token.markup[0]}{${token.markup.length},}\\s*$`).test(last);
   const copy = '<button type="button" data-code-copy>Copy code</button>';
   const plain = `<pre><code>${escape(source)}</code></pre>`;
+  const complete = closed && !env.streaming;
+  const attributes = `data-code-language="${escape(name)}" data-code-complete="${complete}" data-code-view="${view}" data-code-intent="${intent}"`;
   if (name === 'mermaid') {
-    const problem = diagramProblem(source) ?? (++env.diagrams > RENDER_LIMITS.diagrams ? 'Diagram count limit exceeded.' : null);
-    const note = problem ?? (env.streaming ? 'Diagram rendering waits until the response ends.' : !closed ? 'Incomplete Mermaid fence.' : 'Rendering diagram...');
-    return `<div class="code-block diagram-block" data-code-language="mermaid" data-code-complete="${closed && !env.streaming}"${!problem && closed && !env.streaming ? ' data-diagram-source=""' : ''}><div class="code-toolbar"><span>Mermaid</span>${copy}</div><p class="render-note" data-diagram-status>${escape(note)}</p><div class="diagram-output"></div><details class="diagram-source"${problem || !closed || env.streaming ? ' open' : ''}><summary>Diagram source</summary>${plain}</details></div>\n`;
+    const note = env.streaming ? 'Preview waits until the response ends.' : !closed ? 'Incomplete Mermaid fence.' : '';
+    return `<div class="code-block diagram-block" ${attributes}><div class="code-toolbar"><span>Mermaid</span>${copy}</div>${note ? `<p class="render-note">${note}</p>` : ''}<details class="diagram-source artifact-source"${view === 'source' || !complete ? ' open' : ''}><summary>Show code</summary>${plain}</details></div>\n`;
   }
   let rendered = escape(source), note = !closed ? 'Incomplete code fence.' : '';
   if (source.length > RENDER_LIMITS.code) note = 'Highlighting size limit exceeded. Source is shown.';
@@ -108,7 +118,9 @@ md.renderer.rules.fence = (tokens, i, options, env) => {
     try { rendered = hljs.highlight(source, { language: name, ignoreIllegals: true }).value; }
     catch { note = 'Highlighting failed. Source is shown.'; }
   }
-  return `<div class="code-block" data-code-language="${escape(name)}" data-code-complete="${closed && !env.streaming}"><div class="code-toolbar"><span>${escape(name || 'text')}</span>${copy}</div>${note ? `<p class="render-note">${note}</p>` : ''}<pre><code>${rendered}</code></pre></div>\n`;
+  const code = `<pre><code>${rendered}</code></pre>`;
+  const content = view === 'artifact' && complete ? `<details class="artifact-source"><summary>Show code</summary>${code}</details>` : code;
+  return `<div class="code-block" ${attributes}><div class="code-toolbar"><span>${escape(name || 'text')}</span>${copy}</div>${note ? `<p class="render-note">${note}</p>` : ''}${content}</div>\n`;
 };
 
 const cache = new Map(); let cacheBytes = 0;
