@@ -84,6 +84,11 @@ export class Generations {
     const userId = regenerate ? parentId : id(), assistantId = id(), jobId = id();
     // Construct and validate the exact request before changing durable state.
     const messages = this.requestMessages(cid, parentId, regenerate ? null : { id: userId, role: 'user', content, attachments: uploaded }, settings);
+    if (p.capabilities.systemPrompt) {
+      const guide = 'Common Chat rendering: For a runnable webpage or browser artifact, use a fenced html preview block with a complete HTML document, or javascript run/css preview for browser snippets. Mermaid diagrams render by default. For explanatory code that should be read rather than run, add example after the fence language, including html example or mermaid example. Prefer self-contained artifacts. Use JavaScript, CSS and Mermaid fences for separate parts of the same artifact. Do not mark shell, Python, Node.js or other non-browser code as browser-run artifacts.';
+      if (messages[0]?.role === 'system' && typeof messages[0].content === 'string') messages[0].content += `\n\n${guide}`;
+      else messages.unshift({ role: 'system', content: guide });
+    }
     const payload = { model, messages, stream: p.capabilities.streaming };
     if (payload.stream) payload.stream_options = { include_usage: true };
     if (settings.temperature !== undefined) payload.temperature = settings.temperature;

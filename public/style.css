@@ -127,7 +127,13 @@ th, td { border: 1px solid var(--border); text-align: left; padding: 8px 12px; }
 .preview-editors textarea, [data-preview-mermaid] { font-family: var(--font-mono); font-size: 12px; white-space: pre; }
 .preview-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin: 14px 0; }
 .code-preview-frame { display: block; width: 100%; height: 420px; resize: vertical; border: 1px solid var(--border); background: white; }
-.preview-console { max-height: 160px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.preview-console, .artifact-console { max-height: 160px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.inline-artifact { margin-bottom: 14px; }
+.artifact-output { margin-top: 8px; }
+.artifact-output iframe { display: block; width: 100%; height: 420px; resize: vertical; border: 1px solid var(--border); border-radius: var(--radius); background: white; }
+.artifact-source { margin-top: 8px; }
+.artifact-source summary { cursor: pointer; font-size: 12px; color: var(--muted-foreground); }
+.artifact-status { font-size: 12px; color: var(--muted-foreground); margin: 6px 0; }
 .code-toolbar { flex-wrap: wrap; }
 .render-note { color: var(--muted-foreground); font-size: 12px; margin: 6px 0 !important; }
 .render-fallback { overflow-wrap: anywhere; }
@@ -157,6 +163,7 @@ th, td { border: 1px solid var(--border); text-align: left; padding: 8px 12px; }
 .diagram-output svg path, .diagram-output svg line, .diagram-output svg polyline, .diagram-stage svg path, .diagram-stage svg line { stroke: var(--foreground); stroke-width: 1.5px; fill: none; }
 .diagram-output svg rect, .diagram-output svg circle, .diagram-output svg ellipse, .diagram-output svg polygon, .diagram-stage svg rect, .diagram-stage svg circle, .diagram-stage svg polygon { fill: var(--secondary); stroke: var(--foreground); stroke-width: 1px; }
 .diagram-output svg marker path, .diagram-stage svg marker path { fill: var(--foreground); stroke: var(--foreground); }
+.diagram-output svg .node text, .diagram-output svg .cluster text, .diagram-stage svg .node text, .diagram-stage svg .cluster text { text-anchor: middle; }
 .diagram-output svg .cluster rect { fill: var(--background); stroke: var(--border); }
 .diagram-output svg .actor-line, .diagram-output svg .edge-pattern-dashed, .diagram-output svg .relation { stroke-dasharray: 4 3; }
 .diagram-output svg .labelBkg, .diagram-output svg .edgeLabel rect { fill: var(--background); stroke: none; }

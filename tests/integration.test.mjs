@@ -57,9 +57,15 @@ test('Preview execution policy is isolated from the chat policy and opaque-origi
     assert.match(policy,/frame-ancestors http:\/\/127\.0\.0\.1:/);
     assert.equal(preview.headers.get('x-frame-options'),null);
     assert(policy.includes(external?'connect-src http: https: ws: wss:':"connect-src 'none'"));
+    const automatic=await fetch(f.url+'/sandbox?automatic=1&external='+(external?'1':'0'));
+    assert.match(automatic.headers.get('content-security-policy'),/sandbox allow-scripts;/);
     assert((await preview.text()).includes('event.source !== parent'));
   }
-  assert.equal((await f.request('/api/session','GET',null,f.cookie,{Origin:'null'})).status,403);
+  const renderer=await fetch(f.url+'/sandbox-mermaid.js');
+  assert.equal(renderer.status,200); assert.equal(renderer.headers.get('access-control-allow-origin'),'*');
+  assert.equal((await fetch(f.url+'/diagram-source.js')).status,200);
+  const rejected=await f.request('/api/session','GET',null,f.cookie,{Origin:'null'});
+  assert.equal(rejected.status,403); assert.equal(rejected.headers.get('access-control-allow-origin'),null);
   assert.equal((await f.request('/api/conversations','POST',{},f.cookie,{Origin:'null'})).status,403);
 });
 test('Provider keys are encrypted at rest and absent from API and export responses',async t=>{
@@ -80,7 +86,10 @@ test('Streaming saves content, reasoning, model provenance, usage, and exact gen
   assert.equal(answer.providerName,'Mock server');assert.equal(answer.model,'demo-model');assert.equal(answer.settings.temperature,0);
   assert.equal(answer.metadata.usage.completion_tokens,6);
   assert.equal(f.model.requests[0].temperature,0);assert.equal(f.model.requests[0].max_tokens,99);
-  assert.deepEqual(f.model.requests[0].messages[0],{role:'system',content:'Be clear.'});assert.equal(f.model.authHeaders[0],'Bearer provider-secret-123');
+  assert.equal(f.model.requests[0].messages[0].role,'system');
+  assert(f.model.requests[0].messages[0].content.startsWith('Be clear.\n\nCommon Chat rendering:'));
+  assert(f.model.requests[0].messages[0].content.includes('html preview'));
+  assert.equal(f.model.authHeaders[0],'Bearer provider-secret-123');
 });
 test('Final usage-only stream statistics persist through regeneration and native export/import',async t=>{
   const f=await fixture(t),c=await f.conversation(),r=await f.generate(c,{model:'stats'});
@@ -177,7 +186,7 @@ test('Text attachments persist, are included in context, and cannot cross conver
   const uploaded=await f.api(`/api/conversations/${c.id}/attachments`,'POST',{name:'note.txt',mime:'text/plain',data:Buffer.from('The code is 73.').toString('base64')});assert.equal(uploaded.status,201);
   assert.equal((await f.generate(other,{attachments:[uploaded.body.id]})).status,400);
   const r=await f.generate(c,{attachments:[uploaded.body.id]});await f.waitJob(r.body.jobId);
-  assert(f.model.requests[0].messages[0].content.includes('The code is 73.'));
+  assert(f.model.requests[0].messages.find(m=>m.role==='user').content.includes('The code is 73.'));
   const file=await fetch(f.url+`/api/attachments/${uploaded.body.id}`,{headers:{Cookie:f.cookie}});assert.equal(await file.text(),'The code is 73.');
   assert.match(file.headers.get('content-type'),/text\/plain/);
   assert.equal((await f.api(`/api/attachments/${uploaded.body.id}`,'DELETE')).status,409);
@@ -270,7 +279,7 @@ test('Vision attachments reach a capable model and are rejected by a text-only c
   const rejected=await f.generate(c,{providerId:textOnly.body.id,attachments:[file.body.id]});assert.equal(rejected.status,400);
   assert.equal((await f.api(`/api/conversations/${c.id}`)).body.messages.length,0);
   const generated=await f.generate(c,{attachments:[file.body.id]});assert.equal(generated.status,202);await f.waitJob(generated.body.jobId);
-  const image=f.model.requests.at(-1).messages[0].content.find(p=>p.type==='image_url');assert.equal(image.image_url.url,`data:image/png;base64,${data}`);
+  const image=f.model.requests.at(-1).messages.find(m=>m.role==='user').content.find(p=>p.type==='image_url');assert.equal(image.image_url.url,`data:image/png;base64,${data}`);
   const raw=await fetch(f.url+`/api/attachments/${file.body.id}`,{headers:{Cookie:f.cookie}});assert.equal(raw.headers.get('content-type'),'image/png');assert.equal(Buffer.from(await raw.arrayBuffer()).toString('base64'),data);
 });
 test('The API imports a current JSONL ZIP and rejects non-UTF-8 imports without writes',async t=>{

@@ -17,6 +17,7 @@ const assets = new Map([
   ['/theme.css', ['theme.css', 'text/css; charset=utf-8']], ['/favicon.svg', ['favicon.svg', 'image/svg+xml']],
   ['/diagrams.js', ['diagrams.js', 'text/javascript; charset=utf-8']], ['/touch.js', ['touch.js', 'text/javascript; charset=utf-8']],
   ['/previews.js', ['previews.js', 'text/javascript; charset=utf-8']],
+  ['/diagram-source.js', ['diagram-source.js', 'text/javascript; charset=utf-8']],
   ['/vendor/rich-text.js', ['vendor/rich-text.js', 'text/javascript; charset=utf-8']],
   ['/vendor/mermaid.js', ['vendor/mermaid.js', 'text/javascript; charset=utf-8']]
 ]);
@@ -81,7 +82,7 @@ export async function createApp(options = {}) {
       }
       if (method === 'GET' && path === '/sandbox') {
         res.removeHeader('X-Frame-Options');
-        res.setHeader('Content-Security-Policy', sandboxPolicy(originFor(req), url.searchParams.get('external') === '1'));
+        res.setHeader('Content-Security-Policy', sandboxPolicy(originFor(req), url.searchParams.get('external') === '1', url.searchParams.get('automatic') === '1'));
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.end(sandboxDocument()); return;
       }

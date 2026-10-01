@@ -153,7 +153,36 @@ function renderThread(forceBottom = false) {
   document.title = c ? `${c.title} | Common Chat` : 'Common Chat';
   if (!path.length) {
     thread.innerHTML = `<div id="empty-state"><div class="brand-mark">${icon('chat')}</div><h1>Your models. Your conversations.</h1><p class="muted">Chat with the model server you choose.<br>Pick up the same conversation on your next device.</p><div class="empty-actions"><button class="primary" data-open-connections>${icon('plug')}${state.providers.length ? 'Manage connections' : 'Add a connection'}</button><button data-import>${icon('upload')}Import your chats</button></div><div class="empty-detail small">Conversations and attachments stay on this chat server.<br>Model endpoints only receive the context you send.</div></div>`;
-  } else thread.innerHTML = `<div class="thread-inner">${path.map(m => messageHtml(m, c)).join('')}</div>`;
+  } else {
+    // Keep completed message bodies in place. Replacing an iframe would restart
+    // its code on every server update, even when the answer did not change.
+    let inner = thread.querySelector('.thread-inner');
+    if (!inner) { inner = document.createElement('div'); inner.className = 'thread-inner'; thread.replaceChildren(inner); }
+    const existing = new Map([...inner.children].map(node => [node.dataset.message, node]));
+    const keep = new Set(); let previous = null;
+    for (const m of path) {
+      const html = messageHtml(m, c); if (!html) continue;
+      const template = document.createElement('template'); template.innerHTML = html;
+      const fresh = template.content.firstElementChild, old = existing.get(m.id);
+      const sourceKey = JSON.stringify([m.role, m.content, m.reasoning, m.status]);
+      let node = fresh;
+      if (old?.renderSourceKey === sourceKey) {
+        node = old;
+        // Update statistics, actions and metadata without moving the body.
+        for (const name of ['message-header', 'message-stats', 'message-actions', 'message-meta', 'message-error', 'file-links']) {
+          const oldPart = old.querySelector(`:scope > .${name}`), newPart = fresh.querySelector(`:scope > .${name}`);
+          if (oldPart && newPart) oldPart.replaceWith(newPart);
+          else if (oldPart) oldPart.remove();
+          else if (newPart) old.append(newPart);
+        }
+      } else if (old) old.replaceWith(fresh);
+      node.renderSourceKey = sourceKey; keep.add(node);
+      const next = previous ? previous.nextElementSibling : inner.firstElementChild;
+      if (next !== node) inner.insertBefore(node, next);
+      previous = node;
+    }
+    for (const node of [...inner.children]) if (!keep.has(node)) node.remove();
+  }
   thread.scrollTop = forceBottom || bottom ? thread.scrollHeight : top;
   installPreviews(thread);
   renderDiagrams(thread, () => { if (forceBottom || bottom) thread.scrollTop = thread.scrollHeight; });
@@ -308,7 +337,7 @@ async function copyCode(button) {
     if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
     await navigator.clipboard.writeText(code.textContent ?? ''); toast('Code copied.');
   } catch {
-    const details = block.querySelector('.diagram-source'); if (details) details.open = true;
+    const details = block.querySelector('.diagram-source, .artifact-source'); if (details) details.open = true;
     const selection = window.getSelection();
     if (selection) { const range = document.createRange(); range.selectNodeContents(code); selection.removeAllRanges(); selection.addRange(range); }
     code.scrollIntoView({ block: 'nearest' });
