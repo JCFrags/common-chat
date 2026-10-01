@@ -11,7 +11,7 @@ function createDialog() {
     <div class="preview-editors"><label class="field">HTML<textarea data-preview-html rows="6" spellcheck="false"></textarea></label><label class="field">CSS<textarea data-preview-css rows="4" spellcheck="false"></textarea></label><label class="field">JavaScript<textarea data-preview-js rows="6" spellcheck="false"></textarea></label></div>
     <label class="field">Mermaid (optional)<textarea data-preview-mermaid rows="5" spellcheck="false"></textarea></label>
     <div class="preview-controls"><button type="button" data-preview-combine>Load code blocks from this answer</button><label class="check"><input type="checkbox" data-preview-external>Allow external scripts, styles, images, and requests</label><label class="check"><input type="checkbox" data-preview-module>JavaScript is an ES module</label><button type="button" class="primary" data-preview-run>Run / Restart</button><button type="button" data-preview-stop>Stop</button></div>
-    <p class="render-note" data-preview-status>Review the source, then choose Run.</p><div data-preview-output></div><details open><summary>Console</summary><pre class="preview-console" data-preview-console></pre></details>`;
+    <p class="render-note" data-preview-status>Review the source, then choose Run.</p><div data-preview-output></div><details><summary>Console</summary><pre class="preview-console" data-preview-console></pre></details>`;
   document.body.append(dialog);
   dialog.querySelector('[data-preview-close]').addEventListener('click', () => dialog.close());
   dialog.addEventListener('close', stopPreview);
@@ -38,7 +38,7 @@ function openPreview(block, blocks) {
   createDialog(); stopPreview();
   answer = [...(block.closest('.message-body') ?? block.parentElement).querySelectorAll('[data-code-complete="true"][data-code-language]')];
   loadBlocks(blocks); field('external').checked = false;
-  field('console').textContent = ''; dialog.showModal();
+  field('console').textContent = ''; field('console').closest('details').open = false; field('status').classList.remove('artifact-error'); dialog.showModal();
 }
 
 // A CSS/JS neighbor belongs to the nearest HTML artifact without crossing an
@@ -66,64 +66,108 @@ function sourceDetails(block) {
   details.open = false;
   return details;
 }
+function artifactToolbar(block) {
+  const toolbar = block.querySelector('.code-toolbar'); toolbar.classList.add('artifact-toolbar');
+  const copy = toolbar.querySelector('[data-code-copy]');
+  if (copy) { copy.textContent = 'Copy'; copy.title = 'Copy code'; copy.setAttribute('aria-label', 'Copy code'); }
+  let actions = toolbar.querySelector('.artifact-actions');
+  if (!actions) {
+    actions = document.createElement('details'); actions.className = 'artifact-actions';
+    const summary = document.createElement('summary'); summary.textContent = 'Actions'; summary.setAttribute('aria-label', 'Preview actions');
+    const panel = document.createElement('div'); panel.className = 'artifact-actions-panel';
+    actions.append(summary, panel); toolbar.append(actions);
+    panel.addEventListener('click', event => { if (event.target.closest('button')) { actions.open = false; if (!dialog?.open) summary.focus(); } });
+    actions.addEventListener('keydown', event => { if (event.key === 'Escape') { actions.open = false; summary.focus(); } });
+  }
+  return actions.querySelector('.artifact-actions-panel');
+}
+function setViewLabel(toggle, result) {
+  toggle.textContent = result ? 'Source' : 'Result';
+  toggle.title = result ? 'Show as code' : 'Show result'; toggle.setAttribute('aria-label', toggle.title);
+}
 function createSession(output, consoleOutput, status, payload, automatic, external = false) {
   if (['html', 'css', 'js', 'mermaid'].some(name => payload[name].length > 128 * 1024)) {
+    status.hidden = false; status.classList.add('artifact-error');
     status.textContent = 'Each combined source field must fit the 128 Ki-character message limit. Show code or open the sandbox to edit it.';
     return null;
   }
-  const frame = document.createElement('iframe'); frame.className = 'code-preview-frame'; frame.title = 'Isolated code preview';
+  const diagramOnly = Boolean(payload.mermaid && !payload.html && !payload.css && !payload.js);
+  const frame = document.createElement('iframe'); frame.className = `code-preview-frame${diagramOnly ? ' mermaid-preview-frame' : ''}`; frame.title = diagramOnly ? 'Isolated Mermaid diagram' : 'Isolated code preview';
   frame.setAttribute('sandbox', automatic ? 'allow-scripts' : manualSandbox);
   frame.setAttribute('referrerpolicy', 'no-referrer'); frame.setAttribute('credentialless', ''); frame.loading = 'lazy';
   frame.setAttribute('allow', "camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'");
-  const channel = new MessageChannel(); let active = true, entries = 0, bytes = 0;
+  const channel = new MessageChannel(); let active = true, entries = 0, bytes = 0, layouts = 0;
   channel.port1.onmessage = event => {
     if (!active || !frame.isConnected) return;
-    const { level, text } = event.data ?? {};
+    const data = event.data;
+    if (data?.type === 'common-chat-mermaid-layout') {
+      // Only a diagram-only payload can size its own frame. No parent commands.
+      if (!diagramOnly || layouts >= 16 || !data || Array.isArray(data) || Object.keys(data).length !== 2 || typeof data.height !== 'number' || !Number.isFinite(data.height) || data.height <= 0) return;
+      layouts++; frame.style.height = `${Math.round(Math.max(96, Math.min(800, data.height)))}px`;
+      return;
+    }
+    const { level, text } = data ?? {};
     if (!['log', 'info', 'warn', 'error', 'debug', 'status'].includes(level) || typeof text !== 'string' || entries >= 100 || bytes >= 20000) return;
     const line = `[${level}] ${text.slice(0, Math.min(2000, 20000 - bytes))}\n`;
     entries++; bytes += line.length; consoleOutput.append(document.createTextNode(line));
     if (level === 'error') {
-      consoleOutput.closest('details').open = true;
+      const logs = consoleOutput.closest('details'); logs.hidden = false; logs.open = true;
+      status.hidden = false; status.classList.add('artifact-error');
       status.textContent = 'Preview reported an error. Show code or open the sandbox to correct it.';
     }
   };
   frame.addEventListener('load', () => {
     if (!active || !frame.isConnected) return;
-    // The opaque receiver gets source once. The channel accepts console text
-    // only. No message can invoke chat APIs or request parent actions.
-    frame.contentWindow.postMessage(payload, '*', [channel.port2]);
+    // The opaque receiver gets source once. Replies contain bounded console text
+    // or diagram-only layout data. No message can invoke chat APIs or parent actions.
+    frame.contentWindow.postMessage({ ...payload, dark: document.documentElement.classList.contains('dark') }, '*', [channel.port2]);
   }, { once: true });
   frame.src = `/sandbox?automatic=${automatic ? '1' : '0'}&external=${external ? '1' : '0'}`;
-  output.append(frame); status.textContent = automatic ? 'Running in an isolated sandbox. External resources are off. A busy loop can require closing the browser tab.' : 'Running. Stop removes the frame. A busy loop can require closing the browser tab.';
-  return { close() { active = false; channel.port1.close(); channel.port2.close(); frame.remove(); } };
+  // Theme messages travel only to the sandbox. They do not accept parent actions.
+  const themeObserver = payload.mermaid ? new MutationObserver(() => {
+    if (active) channel.port1.postMessage({ type: 'common-chat-theme', dark: document.documentElement.classList.contains('dark') });
+  }) : null;
+  themeObserver?.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+  output.append(frame); status.textContent = automatic ? 'Running in an isolated sandbox. External resources are off.' : 'Running. Stop removes the frame. A busy loop can require closing the browser tab.';
+  status.hidden = automatic; status.classList.remove('artifact-error');
+  return { close() { active = false; themeObserver?.disconnect(); channel.port1.close(); channel.port2.close(); frame.remove(); } };
 }
 function installArtifact(block, members) {
   if (inlineStates.has(block)) return inlineStates.get(block);
   block.classList.add('inline-artifact');
-  const details = sourceDetails(block);
+  const details = sourceDetails(block), actions = artifactToolbar(block);
   for (const member of members) {
     member.removeAttribute('data-diagram-source');
     if (member === block) continue;
     sourceDetails(member); member.dataset.artifactSibling = 'true';
-    const label = document.createElement('p'); label.textContent = member.dataset.codeLanguage;
-    details.append(label, member.querySelector('pre').cloneNode(true));
+    const source = document.createElement('div'); source.className = 'code-block artifact-group-source';
+    const toolbar = document.createElement('div'); toolbar.className = 'code-toolbar artifact-toolbar';
+    const label = document.createElement('span'); label.textContent = member.dataset.codeLanguage;
+    const copy = document.createElement('button'); copy.type = 'button'; copy.dataset.codeCopy = ''; copy.textContent = 'Copy'; copy.setAttribute('aria-label', `Copy ${member.dataset.codeLanguage} code`);
+    toolbar.append(label, copy); source.append(toolbar, member.querySelector('pre').cloneNode(true)); details.append(source);
   }
   const output = document.createElement('div'); output.className = 'artifact-output';
-  const status = document.createElement('p'); status.className = 'render-note artifact-status'; status.textContent = 'Preview starts when visible.';
+  const status = document.createElement('p'); status.className = 'render-note artifact-status'; status.textContent = 'Preview starts when visible.'; status.hidden = true;
   const logs = document.createElement('details'); logs.className = 'artifact-console';
+  logs.hidden = true;
   const summary = document.createElement('summary'); summary.textContent = 'Console';
   const consoleOutput = document.createElement('pre'); consoleOutput.className = 'preview-console'; logs.append(summary, consoleOutput);
   block.insertBefore(output, details); block.insertBefore(status, details); block.insertBefore(logs, details);
   const stop = document.createElement('button'), restart = document.createElement('button');
   stop.type = restart.type = 'button'; stop.textContent = 'Stop'; restart.textContent = 'Restart';
   stop.dataset.artifactStop = ''; restart.dataset.artifactRestart = '';
-  block.querySelector('.code-toolbar').append(stop, restart);
+  const consoleButton = document.createElement('button'); consoleButton.type = 'button'; consoleButton.textContent = 'Console';
+  consoleButton.addEventListener('click', () => { logs.hidden = !logs.hidden; logs.open = !logs.hidden; });
+  const safety = document.createElement('details'); safety.className = 'artifact-safety';
+  const safetyLabel = document.createElement('summary'); safetyLabel.textContent = 'Sandbox information';
+  const safetyText = document.createElement('p'); safetyText.textContent = 'Isolated browser frame. External resources are off. Do not enter secrets. Code can navigate its frame. A busy loop can require closing the browser tab.';
+  safety.append(safetyLabel, safetyText); actions.append(stop, restart, consoleButton, safety);
   const state = {
     block, observer: null, session: null, started: false, paused: false, hidden: false,
-    close() { this.paused = true; this.started = true; this.observer?.disconnect(); this.session?.close(); stop.disabled = true; status.textContent = 'Preview stopped. Restart or show code to correct it.'; },
-    restart() { this.close(); activeInline.add(this); this.paused = false; this.started = false; stop.disabled = false; consoleOutput.textContent = ''; status.textContent = 'Preview starts when visible.'; schedule(); },
-    hide() { this.close(); this.hidden = true; block.dataset.codeDisplay = 'source'; output.hidden = status.hidden = logs.hidden = stop.hidden = restart.hidden = true; details.open = true; const toggle = block.querySelector('[data-code-view-toggle]'); if (toggle) toggle.textContent = 'Show result'; },
-    show() { output.hidden = status.hidden = logs.hidden = stop.hidden = restart.hidden = false; details.open = false; if (this.paused) this.restart(); this.hidden = false; block.dataset.codeDisplay = 'artifact'; const toggle = block.querySelector('[data-code-view-toggle]'); if (toggle) toggle.textContent = 'Show as code'; },
+    close() { this.paused = true; this.started = true; this.observer?.disconnect(); this.session?.close(); stop.disabled = true; status.hidden = false; status.classList.remove('artifact-error'); status.textContent = 'Preview stopped. Use Actions to restart.'; },
+    restart() { this.close(); activeInline.add(this); this.paused = false; this.started = false; stop.disabled = false; consoleOutput.textContent = ''; logs.hidden = true; logs.open = false; status.hidden = true; status.textContent = 'Preview starts when visible.'; schedule(); },
+    hide() { this.close(); this.hidden = true; block.dataset.codeDisplay = 'source'; output.hidden = status.hidden = logs.hidden = stop.hidden = restart.hidden = consoleButton.hidden = true; details.open = true; const toggle = block.querySelector('[data-code-view-toggle]'); if (toggle) setViewLabel(toggle, false); },
+    show() { output.hidden = stop.hidden = restart.hidden = consoleButton.hidden = false; details.open = false; if (this.paused) this.restart(); this.hidden = false; block.dataset.codeDisplay = 'artifact'; const toggle = block.querySelector('[data-code-view-toggle]'); if (toggle) setViewLabel(toggle, true); },
   };
   stop.addEventListener('click', () => state.close());
   restart.addEventListener('click', () => { state.restart(); state.show(); });
@@ -164,7 +208,7 @@ export function installPreviews(root) {
       button.addEventListener('click', () => openPreview(block, membersFor.get(block) ?? [block]));
       const toggle = document.createElement('button'); toggle.type = 'button'; toggle.dataset.codeViewToggle = '';
       const defaultResult = block.dataset.codeView === 'artifact' || block.dataset.artifactSibling === 'true';
-      toggle.textContent = defaultResult ? 'Show as code' : 'Show result';
+      setViewLabel(toggle, defaultResult);
       toggle.addEventListener('click', () => {
         const result = !(block.dataset.codeDisplay ? block.dataset.codeDisplay === 'artifact' : defaultResult);
         block.dataset.codeDisplay = result ? 'artifact' : 'source';
@@ -175,9 +219,10 @@ export function installPreviews(root) {
         } else {
           inlineStates.get(block)?.hide(); sourceDetails(block).open = true;
         }
-        toggle.textContent = result ? 'Show as code' : 'Show result';
+        setViewLabel(toggle, result);
       });
-      block.querySelector('.code-toolbar').append(button, toggle);
+      const actions = artifactToolbar(block); actions.prepend(button);
+      block.querySelector('.code-toolbar').insertBefore(toggle, actions.parentElement);
     }
   }
 }
@@ -193,6 +238,6 @@ export function cancelPreviews() {
 function runPreview() {
   stopPreview();
   const payload = { type: 'common-chat-preview', html: field('html').value, css: field('css').value, js: field('js').value, mermaid: field('mermaid').value, module: field('module').checked };
-  field('console').textContent = '';
+  field('console').textContent = ''; field('console').closest('details').open = false;
   manualSession = createSession(field('output'), field('console'), field('status'), payload, false, field('external').checked);
 }
