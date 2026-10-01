@@ -8,6 +8,7 @@ import { Generations } from './generation.mjs';
 import { HttpError, fail, id, now, body, text, object, settings, providerConfig, attachmentData } from './validation.mjs';
 import { listModels } from './provider.mjs';
 import { importConversations, exportConversations } from './transfer.mjs';
+import { sandboxPolicy, sandboxDocument } from './sandbox.mjs';
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), '../public');
 const assets = new Map([
@@ -15,6 +16,7 @@ const assets = new Map([
   ['/markdown.js', ['markdown.js', 'text/javascript; charset=utf-8']], ['/style.css', ['style.css', 'text/css; charset=utf-8']],
   ['/theme.css', ['theme.css', 'text/css; charset=utf-8']], ['/favicon.svg', ['favicon.svg', 'image/svg+xml']],
   ['/diagrams.js', ['diagrams.js', 'text/javascript; charset=utf-8']], ['/touch.js', ['touch.js', 'text/javascript; charset=utf-8']],
+  ['/previews.js', ['previews.js', 'text/javascript; charset=utf-8']],
   ['/vendor/rich-text.js', ['vendor/rich-text.js', 'text/javascript; charset=utf-8']],
   ['/vendor/mermaid.js', ['vendor/mermaid.js', 'text/javascript; charset=utf-8']]
 ]);
@@ -64,13 +66,25 @@ export async function createApp(options = {}) {
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; connect-src 'self'; frame-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'");
     if (publicUrl?.protocol === 'https:') res.setHeader('Strict-Transport-Security', 'max-age=31536000');
     try {
       checkHost(req);
       if (trustedLocal && !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.socket.remoteAddress)) fail(403, 'Trusted-local access requires a loopback reverse proxy.');
       const url = new URL(req.url, 'http://internal'), path = url.pathname, method = req.method;
       if (method === 'GET' && path === '/healthz') { send(res, { status: 'ok' }); return; }
+      // CORS applies only to this public renderer bundle, never to chat APIs.
+      if (method === 'GET' && path === '/sandbox-mermaid.js') {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+        res.end(readFileSync(join(publicDir, 'vendor/mermaid.js'))); return;
+      }
+      if (method === 'GET' && path === '/sandbox') {
+        res.removeHeader('X-Frame-Options');
+        res.setHeader('Content-Security-Policy', sandboxPolicy(originFor(req), url.searchParams.get('external') === '1'));
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.end(sandboxDocument()); return;
+      }
       if (method === 'GET' && assets.has(path)) {
         const [file, type] = assets.get(path);
         res.setHeader('Content-Type', type); res.end(readFileSync(join(publicDir, file))); return;

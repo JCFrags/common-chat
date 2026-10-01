@@ -196,13 +196,13 @@ Metadata uses the existing JSON column and native export/import format. Old mess
 
 Assistant answers and reasoning use the same renderer. User messages stay plain text. Rendering does not change saved message source, provider data, settings, attachments, or import/export content.
 
-Supported Markdown includes headings, nested ordered/unordered lists, read-only `[ ]` and `[x]` tasks, tables with column alignment, HTTP/HTTPS links without URL credentials, quotes, emphasis, strikeout, and fenced code. Raw HTML is escaped. Markdown image syntax remains text and makes no image request. Footnotes and executable HTML/JavaScript previews are not enabled. Fences have language labels and source-copy controls. Unsupported languages stay readable without automatic language detection.
+Supported Markdown includes headings, nested ordered/unordered lists, read-only `[ ]` and `[x]` tasks, tables with column alignment, HTTP/HTTPS links without URL credentials, quotes, emphasis, strikeout, and fenced code. Raw HTML is escaped in the chat body. Markdown image syntax remains text and makes no image request. Footnotes are not enabled. Executable HTML/JavaScript previews require an explicit sandbox Run action, described below. Fences have language labels and source-copy controls. Unsupported languages stay readable without automatic language detection.
 
 The bundled highlighter supports JavaScript, TypeScript, Python, JSON, Bash, CSS, HTML/XML, SQL, C, C++, Java, Rust, Go, YAML, Markdown, and their registered aliases. A code block must have a closing fence and fit the highlighting limit. Streaming responses show plain code until the response ends.
 
 KaTeX supports `$...$` and `\\(...\\)` inline math. Put `$$...$$` or `\\[...\\]` block math on separate lines. The opening and closing delimiters can share one block line. Incomplete delimiters remain visible text. Math uses MathML-only output, not inline HTML styles or downloaded fonts. Use a current browser with native MathML, such as Firefox, Chromium 109 or later, or current Safari. Mermaid 12 targets modern browsers, including Safari 17.4 or later. Browser acceptance remains a separate deployment check.
 
-Mermaid supports `graph`/`flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`/`stateDiagram-v2`, `erDiagram`, and `pie` fences. Other types remain visible source. The Tiny build excludes mind maps, architecture, ELK layouts, and Mermaid math. Input frontmatter, configuration directives, styling directives, callbacks, click links, HTML labels, and image/icon shapes are rejected. This conservative filter can also reject labels that contain reserved words or URL text. Diagrams use fixed application styles, not input styling. Source is available below each rendered diagram.
+Mermaid supports `graph`/`flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`/`stateDiagram-v2`, `erDiagram`, and `pie` fences. Other types remain visible source. The Tiny build excludes mind maps, architecture, ELK layouts, and Mermaid math. The automatic renderer ignores simple `style`, `classDef`, `linkStyle`, and applicable class assignments. It uses fixed application styles and preserves the original source for copying. Statement-aware parsing permits ordinary reserved words in labels. Input frontmatter, configuration directives, complex styling, callbacks, click links, HTML labels, URL text, and image/icon shapes still use visible-source fallback. These features can be tried with an explicit sandbox preview instead.
 
 | Work | Limit per answer or reasoning body |
 | --- | --- |
@@ -217,7 +217,7 @@ Mermaid supports `graph`/`flowchart`, `sequenceDiagram`, `classDiagram`, `stateD
 
 Diagrams render one at a time, only after generation ends and a closing fence is present. Rerenders, navigation, and sign-out invalidate queued work. Stale asynchronous results cannot replace the current thread. Input size limits bound work but are not a hard execution-time deadline for Mermaid's main-thread layout. Invalid or unsupported diagrams show an error and their source. Diagram callbacks are never bound.
 
-DOMPurify sanitizes generated browser HTML/MathML and diagram SVG. SVG allows only static drawing/text elements and bounded output. It removes scripts, links, images, `foreignObject`, animation, styles, and network references. Marker and accessibility references are rewritten to unique local IDs. The existing CSP remains unchanged, including `script-src 'self'` and `style-src 'self'`. Fixed external CSS replaces Mermaid-generated inline styles. Mermaid can still attempt to insert internal styles into its temporary offscreen render stage. The CSP blocks those styles. No remote renderer assets, CDN, fonts, or model content requests are needed.
+DOMPurify sanitizes generated browser HTML/MathML and diagram SVG. SVG allows only static drawing/text elements and bounded output. It removes scripts, links, images, `foreignObject`, animation, styles, and network references. Marker and accessibility references are rewritten to unique local IDs. The chat document retains `script-src 'self'` and `style-src 'self'`. Its explicit `frame-src 'self'` permits the separate preview document. Only that sandbox document allows inline execution and styling. Fixed external CSS replaces Mermaid-generated inline styles. Mermaid can still attempt to insert internal styles into its temporary offscreen render stage. The CSP blocks those styles. No remote renderer assets, CDN, fonts, or model content requests are needed.
 
 On an HTTP site, browser clipboard access can be absent. The code-copy control then reveals and selects the source and shows manual copy instructions. Use the browser Copy command, Ctrl+C, or a touchscreen long-press. Whole-message Copy still copies the original message source when clipboard access is available.
 
@@ -227,6 +227,24 @@ Mobile touch gestures apply only up to the existing 760 CSS-pixel breakpoint:
 2. Swipe left from a noninteractive area inside the open sidebar to close it.
 
 Each gesture needs 64 pixels of horizontal movement within 800 ms, at most 40 pixels of vertical movement, and at least 1.7 times as much horizontal as vertical movement. Multiple touches, existing text selection, vertical movement, interactive controls, and rich message content are excluded. Mouse drags do not trigger gestures. The existing menu button and backdrop tap still work. The automated check covers direction/distance classification, not physical-phone gesture behavior.
+
+### Run code and preview diagrams
+
+1. Select "Preview / Run" on a completed HTML, XML/SVG, CSS, JavaScript, or Mermaid fence.
+2. Review or edit the source fields. Use "Load code blocks from this answer" to combine HTML, CSS, and JavaScript snippets. If the answer has several Mermaid blocks, this action loads the first. Open another block to preview another diagram.
+3. If the JavaScript uses module syntax, select "JavaScript is an ES module". Browser JavaScript does not provide Node.js `require`, process access, or a host filesystem.
+4. If the example needs remote libraries, styles, images, fonts, media, frames, or requests, select the external-resource option.
+5. Select "Run / Restart". "Stop" or "Close" removes the execution frame. Switching chats, branches, or signing out also stops the preview. Source edits are temporary and do not change the saved answer.
+
+WARNING
+
+Preview code is untrusted. Do not enter secrets or select private files in a preview. External resources can contact websites and devices reachable by your browser. The option blocks resource loading by default, but it is not an offline guarantee: code can navigate its own frame, create sandboxed popups, and initiate downloads. Popups keep sandbox restrictions. Browsers can offer external protocol handlers after a user action. Preview code can display misleading content, open dialogs, consume CPU/memory, and forge console messages. A busy loop can require closing the browser tab. This is origin isolation, not an operating-system container or a hard CPU/network limit.
+
+The preview uses `/sandbox` with both an iframe sandbox attribute and an HTTP CSP `sandbox` directive. Neither permits `allow-same-origin`, top navigation, storage access, or popup sandbox escape. Its opaque origin cannot access the chat DOM, cookies, or storage. The response policy also applies when the sandbox URL is opened directly. API Origin and same-origin JSON mutation checks remain active. The main document never evaluates preview source.
+
+A dedicated MessageChannel transfers only the chosen source, once after the initial trusted frame loads. Responses can append bounded console text only, never invoke chat actions. The parent inserts console text with text nodes. The console retains at most 100 entries and about 20 Ki characters. Each editor uses the existing 128 Ki-character message bound. These limits do not bound all browser work.
+
+The sandbox loads the same pinned Mermaid Tiny bundle through the public `/sandbox-mermaid.js` endpoint. CORS permission applies only to that static bundle, never to chat APIs. Manual Mermaid rendering permits input styles, HTML labels, configuration and callback binding inside the sandbox. Define callback functions in the JavaScript field when needed. Remote resources still need the explicit option and remain subject to browser CORS, mixed-content, and network rules. The Tiny build's missing diagram types remain unavailable. Invalid source reports its renderer error in the console. Automatic diagrams never bind callbacks.
 
 ### Rebuild browser assets
 

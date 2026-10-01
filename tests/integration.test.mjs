@@ -43,6 +43,25 @@ test('Authentication protects chats and attachments and uses HttpOnly SameSite c
   assert.equal(badHostStatus,403);
   const raw=readFileSync(join(f.dir,'chat.sqlite'));assert(!raw.includes(Buffer.from(password)));
 });
+test('Preview execution policy is isolated from the chat policy and opaque-origin API calls are rejected',async t=>{
+  const f=await fixture(t);
+  const main=await fetch(f.url+'/');
+  assert.match(main.headers.get('content-security-policy'),/script-src 'self'; style-src 'self'/);
+  assert.equal(main.headers.get('x-frame-options'),'DENY');
+  for (const external of [false,true]) {
+    const preview=await fetch(f.url+'/sandbox?external='+(external?'1':'0'));
+    assert.equal(preview.status,200);
+    const policy=preview.headers.get('content-security-policy');
+    assert.match(policy,/sandbox allow-scripts/);
+    assert(!policy.includes('allow-same-origin')); assert(!policy.includes('allow-top-navigation')); assert(!policy.includes('allow-popups-to-escape-sandbox'));
+    assert.match(policy,/frame-ancestors http:\/\/127\.0\.0\.1:/);
+    assert.equal(preview.headers.get('x-frame-options'),null);
+    assert(policy.includes(external?'connect-src http: https: ws: wss:':"connect-src 'none'"));
+    assert((await preview.text()).includes('event.source !== parent'));
+  }
+  assert.equal((await f.request('/api/session','GET',null,f.cookie,{Origin:'null'})).status,403);
+  assert.equal((await f.request('/api/conversations','POST',{},f.cookie,{Origin:'null'})).status,403);
+});
 test('Provider keys are encrypted at rest and absent from API and export responses',async t=>{
   const f=await fixture(t),p=(await f.api('/api/providers')).body[0];
   assert.equal(p.hasKey,true);assert(!JSON.stringify(p).includes('provider-secret'));

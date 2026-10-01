@@ -1,6 +1,7 @@
 import { markdown, escape as esc } from './markdown.js';
 import { renderDiagrams, cancelDiagrams } from './diagrams.js';
 import { installSidebarGestures } from './touch.js';
+import { installPreviews, cancelPreviews } from './previews.js';
 const $ = selector => document.querySelector(selector);
 const icons = {
   chat: '<path d="M4 4h16v12H9l-5 4V4Z"/><path d="M8 8h8M8 12h5"/>',
@@ -50,7 +51,7 @@ function toast(message) {
   toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 10000);
 }
 function showLogin() {
-  state.authenticated = false; events?.close(); cancelDiagrams();
+  state.authenticated = false; events?.close(); cancelDiagrams(); cancelPreviews();
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('#app').hidden = true; $('#login-screen').hidden = false; $('#password').focus();
 }
@@ -154,6 +155,7 @@ function renderThread(forceBottom = false) {
     thread.innerHTML = `<div id="empty-state"><div class="brand-mark">${icon('chat')}</div><h1>Your models. Your conversations.</h1><p class="muted">Chat with the model server you choose.<br>Pick up the same conversation on your next device.</p><div class="empty-actions"><button class="primary" data-open-connections>${icon('plug')}${state.providers.length ? 'Manage connections' : 'Add a connection'}</button><button data-import>${icon('upload')}Import your chats</button></div><div class="empty-detail small">Conversations and attachments stay on this chat server.<br>Model endpoints only receive the context you send.</div></div>`;
   } else thread.innerHTML = `<div class="thread-inner">${path.map(m => messageHtml(m, c)).join('')}</div>`;
   thread.scrollTop = forceBottom || bottom ? thread.scrollHeight : top;
+  installPreviews(thread);
   renderDiagrams(thread, () => { if (forceBottom || bottom) thread.scrollTop = thread.scrollHeight; });
   updateControls();
 }
@@ -166,7 +168,7 @@ async function loadCurrent(forceBottom = false) {
 }
 async function navigate(cid, known = null) {
   if (state.busy || state.retry) { toast('Finish the current submission before switching conversations.'); return; }
-  rememberDraft(); cancelDiagrams();
+  rememberDraft(); cancelDiagrams(); cancelPreviews();
   if (routeId() !== cid) history.pushState(null, '', cid ? `#${encodeURIComponent(cid)}` : location.pathname);
   state.conversation = known; restoreDraft(cid); $('#app').classList.remove('sidebar-open');
   if (cid && !known) {
@@ -184,7 +186,7 @@ async function createConversation() {
 }
 async function newChat() {
   if (state.busy || state.retry) return;
-  rememberDraft(); state.busy = true; updateControls();
+  rememberDraft(); cancelPreviews(); state.busy = true; updateControls();
   try {
     const c = await createConversation(); restoreDraft(c.id); renderThread(true); await refreshList();
     $('#app').classList.remove('sidebar-open'); $('#prompt').focus();
@@ -274,6 +276,7 @@ async function regenerate(messageId) {
 }
 async function selectBranch(messageId) {
   if (state.busy || state.retry || state.conversation?.activeJob) return;
+  cancelPreviews();
   const c = state.conversation; let leaf = messageId, seen = new Set();
   while (!seen.has(leaf)) {
     seen.add(leaf);
@@ -423,7 +426,7 @@ function connectEvents() {
       else if (change.type === 'preferences') { const session = await api('/api/session'); state.preferences = session.settings; applyTheme(); }
       else if (change.type === 'deleted') {
         if (change.conversationId === state.conversation?.id) {
-          rememberDraft(); history.replaceState(null,'',location.pathname); state.conversation = null; restoreDraft(null); renderThread();
+          rememberDraft(); cancelPreviews(); history.replaceState(null,'',location.pathname); state.conversation = null; restoreDraft(null); renderThread();
           toast('This conversation was deleted on another device.');
         }
         scheduleList();
@@ -541,7 +544,7 @@ $('#delete-conversation').addEventListener('click', async () => {
   const c = state.conversation; if (!c || !confirm('Permanently delete this conversation, all branches, and its attachments?')) return;
   try {
     await api(`/api/conversations/${c.id}`, 'DELETE', { expectedVersion: c.version }); $('#conversation-dialog').close();
-    state.drafts.delete(c.id); history.replaceState(null,'',location.pathname); state.conversation = null; restoreDraft(null); renderThread(); await refreshList();
+    cancelPreviews(); state.drafts.delete(c.id); history.replaceState(null,'',location.pathname); state.conversation = null; restoreDraft(null); renderThread(); await refreshList();
   } catch(e) { $('#conversation-error').textContent = e.message; if (e.status === 409) await loadCurrent().catch(() => {}); }
 });
 $('#sidebar-toggle').addEventListener('click', () => $('#app').classList.toggle('sidebar-open'));

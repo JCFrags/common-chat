@@ -112,7 +112,7 @@ md.renderer.rules.fence = (tokens, i, options, env) => {
     try { rendered = hljs.highlight(source, { language: name, ignoreIllegals: true }).value; }
     catch { note = 'Highlighting failed. Source is shown.'; }
   }
-  return `<div class="code-block"><div class="code-toolbar"><span>${escape(name || 'text')}</span>${copy}</div>${note ? `<p class="render-note">${note}</p>` : ''}<pre><code>${rendered}</code></pre></div>\n`;
+  return `<div class="code-block" data-code-language="${escape(name)}" data-code-complete="${closed && !env.streaming}"><div class="code-toolbar"><span>${escape(name || 'text')}</span>${copy}</div>${note ? `<p class="render-note">${note}</p>` : ''}<pre><code>${rendered}</code></pre></div>\n`;
 };
 
 const cache = new Map(); let cacheBytes = 0;
