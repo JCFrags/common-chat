@@ -46,6 +46,7 @@ When supplied, `Origin` must equal `PUBLIC_URL`. Host validation also applies to
   "models": ["model-name"],
   "capabilities": {
     "streaming": true,
+    "llamaCppTimings": false,
     "systemPrompt": true,
     "vision": false,
     "temperature": true,
@@ -57,6 +58,8 @@ When supplied, `Origin` must equal `PUBLIC_URL`. Host validation also applies to
 ```
 
 An empty key on update retains the saved key. `clearKey: true` removes it. Connection responses return `hasKey`, never the saved key. Unknown generation settings are rejected.
+
+`capabilities.llamaCppTimings` defaults to false. Only an enabled streaming connection sends the llama.cpp request extensions `timings_per_token: true` and `return_progress: true`. Enable this capability only for an endpoint that supports both fields. The server still consumes validated interim usage, timings, and prompt progress when supplied without this option.
 
 ## Generation example
 
@@ -87,7 +90,9 @@ Regeneration sets `regenerate: true` and uses a user message ID as `parentId`. I
 
 Events are JSON objects carried in the SSE `data` field. Types include `hello`, `delta`, `changed`, `deleted`, `providers`, and `preferences`.
 
-The `delta` event contains an updated message and conversation version. It is a saved-state update, not a raw provider token event. On `hello` or reconnection, the client reloads the current conversation and list.
+The `delta` event contains an updated message and conversation version. It is a saved-state update, not a raw provider token event. Metadata-only upstream chunks can emit a delta without changing answer or reasoning text. Updates are bounded to ten per second, with server elapsed observations at most once per second during quiet periods. On `hello` or reconnection, the client reloads the current conversation and list.
+
+Assistant message metadata includes validated `usage`, `timings`, `promptProgress`, and `observed`. Upstream `prompt_progress` maps to `promptProgress: { total, cache, processed, time_ms }`. Processed includes cached tokens. The last progress sample remains after completion. Later validated values replace earlier values. `observed.durationMs` updates from the monotonic server clock and becomes the final duration when the job ends. Missing upstream counts or rates are not estimated. These fields persist in native exports without a schema migration.
 
 SSE does not supply a persistent replay cursor. A missed event is resolved with an authoritative snapshot. Client disconnection never implies cancellation.
 
