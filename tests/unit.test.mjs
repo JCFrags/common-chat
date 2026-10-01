@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sseRecords, deltaText } from '../server/provider.mjs';
+import { sseRecords, deltaText, usageStats, timingStats } from '../server/provider.mjs';
 import { settings, providerConfig, attachmentData, decodeBase64 } from '../server/validation.mjs';
 import { markdown } from '../public/markdown.js';
 import { parseText, crc32, zipEntries } from '../server/transfer.mjs';
@@ -15,6 +15,23 @@ test('SSE parser rejects oversized events', async () => {
   await assert.rejects(async () => { for await (const _ of sseRecords(bytes('data: '+'x'.repeat(2*1024*1024+1),65536))) {} }, /too large/);
 });
 test('Content arrays retain text only', () => { assert.equal(deltaText([{type:'text',text:'one'},{text:'two'}]), 'onetwo'); });
+test('Response statistics retain recognized bounded numbers without coercion or arbitrary fields', () => {
+  assert.deepEqual(usageStats({ prompt_tokens:0, completion_tokens:6, total_tokens:6,
+    completion_tokens_details:{ reasoning_tokens:2, audio_tokens:'3', private_text:'omit' }, private_text:'omit' }),
+  { prompt_tokens:0, completion_tokens:6, total_tokens:6, completion_tokens_details:{ reasoning_tokens:2 } });
+  assert.deepEqual(timingStats({ prompt_n:7, prompt_ms:0, prompt_per_second:350.5, predicted_n:6, predicted_ms:60,
+    predicted_per_second:100, draft_n:10, draft_n_accepted:4, unknown:'omit' }),
+  { prompt_n:7, predicted_n:6, draft_n:10, draft_n_accepted:4, prompt_ms:0, prompt_per_second:350.5, predicted_ms:60, predicted_per_second:100 });
+  for (const n of [-1, NaN, Infinity, '42', null, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.equal(usageStats({ prompt_tokens:n, completion_tokens_details:{ reasoning_tokens:n } }), null);
+    assert.equal(timingStats({ prompt_n:n, predicted_per_second:n }), null);
+  }
+  assert.equal(usageStats({ completion_tokens:1.5 }), null);
+  assert.equal(timingStats({ draft_n:1.5 }), null);
+  for (const value of [null, undefined, [], 'bad', {}]) {
+    assert.equal(usageStats(value), null); assert.equal(timingStats(value), null);
+  }
+});
 test('Settings preserve explicit zero and reject unsupported names and invalid numbers', () => {
   assert.deepEqual(settings({temperature:0,topP:0,maxTokens:1}), {temperature:0,topP:0,maxTokens:1});
   for (const input of [{temperature:NaN},{temperature:3},{topP:-1},{maxTokens:0},{maxTokens:1.5},{seed:1}]) assert.throws(()=>settings(input));

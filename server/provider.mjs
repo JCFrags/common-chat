@@ -67,6 +67,34 @@ export async function limitedText(response, max) {
   }
   return Buffer.concat(chunks).toString('utf8');
 }
+// Keep recognized numeric statistics only. Do not retain arbitrary upstream fields.
+function numericStats(value, keys, integer = false) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const result = {};
+  for (const key of keys) {
+    const n = value[key];
+    if (typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER && (!integer || Number.isSafeInteger(n))) result[key] = n;
+  }
+  return Object.keys(result).length ? result : null;
+}
+export function usageStats(value) {
+  const result = numericStats(value, ['prompt_tokens', 'completion_tokens', 'total_tokens'], true) ?? {};
+  for (const [key, fields] of [
+    ['prompt_tokens_details', ['cached_tokens', 'audio_tokens']],
+    ['completion_tokens_details', ['reasoning_tokens', 'audio_tokens', 'accepted_prediction_tokens', 'rejected_prediction_tokens']]
+  ]) {
+    const details = numericStats(value?.[key], fields, true);
+    if (details) result[key] = details;
+  }
+  return Object.keys(result).length ? result : null;
+}
+export function timingStats(value) {
+  const result = {
+    ...numericStats(value, ['prompt_n', 'predicted_n', 'draft_n', 'draft_n_accepted'], true),
+    ...numericStats(value, ['prompt_ms', 'prompt_per_second', 'predicted_ms', 'predicted_per_second'])
+  };
+  return Object.keys(result).length ? result : null;
+}
 export function deltaText(value) {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(x => typeof x?.text === 'string' ? x.text : '').join('');

@@ -63,6 +63,33 @@ test('Streaming saves content, reasoning, model provenance, usage, and exact gen
   assert.equal(f.model.requests[0].temperature,0);assert.equal(f.model.requests[0].max_tokens,99);
   assert.deepEqual(f.model.requests[0].messages[0],{role:'system',content:'Be clear.'});assert.equal(f.model.authHeaders[0],'Bearer provider-secret-123');
 });
+test('Final usage-only stream statistics persist through regeneration and native export/import',async t=>{
+  const f=await fixture(t),c=await f.conversation(),r=await f.generate(c,{model:'stats'});
+  assert.equal((await f.waitJob(r.body.jobId)).status,'complete');
+  let saved=(await f.api(`/api/conversations/${c.id}`)).body;
+  const answer=saved.messages.find(m=>m.id===r.body.messageId);
+  assert.deepEqual(f.model.requests[0].stream_options,{include_usage:true});
+  assert.deepEqual(answer.metadata.timings,{prompt_n:7,predicted_n:6,draft_n:10,draft_n_accepted:4,
+    prompt_ms:20,prompt_per_second:350,predicted_ms:60,predicted_per_second:100});
+  assert.equal(answer.metadata.usage.prompt_tokens,9);assert.equal(answer.metadata.usage.completion_tokens,6);
+  assert.equal(answer.metadata.observed.responseMode,'streaming');
+  assert(answer.metadata.observed.firstTextMs>=0);
+  // Reasoning is sent before the delayed answer. It must count as the first text.
+  assert(answer.metadata.observed.durationMs-answer.metadata.observed.firstTextMs>=200);
+  const nonstream=await f.api('/api/providers','POST',{name:'JSON model',baseUrl:f.model.url,capabilities:{...caps,streaming:false}});
+  const regenerated=await f.generate(saved,{providerId:nonstream.body.id,regenerate:true,parentId:answer.parentId,content:undefined});
+  assert.equal((await f.waitJob(regenerated.body.jobId)).status,'complete');
+  assert.equal(f.model.requests[1].stream,false);assert.equal(f.model.requests[1].stream_options,undefined);
+  saved=(await f.api(`/api/conversations/${c.id}`)).body;
+  assert.deepEqual(saved.messages.find(m=>m.id===answer.id).metadata,answer.metadata);
+  const jsonAnswer=saved.messages.find(m=>m.id===regenerated.body.messageId);
+  assert.equal(jsonAnswer.metadata.timings,null);assert.equal(jsonAnswer.metadata.observed.firstTextMs,null);
+  assert.equal(jsonAnswer.metadata.observed.responseMode,'non-streaming');assert(jsonAnswer.metadata.observed.durationMs>=0);
+  const exported=(await f.api(`/api/conversations/${c.id}/export`)).body;
+  const imported=await f.api('/api/import','POST',{text:JSON.stringify(exported)});assert.equal(imported.status,201);
+  const copy=(await f.api(`/api/conversations/${imported.body.conversationIds[0]}`)).body;
+  assert.deepEqual(copy.messages.find(m=>m.model==='stats').metadata,answer.metadata);
+});
 test('Two independent sessions read the same server history',async t=>{
   const f=await fixture(t),other=await f.login(),c=await f.conversation(),r=await f.generate(c);
   await f.waitJob(r.body.jobId);

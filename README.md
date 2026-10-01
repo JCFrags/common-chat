@@ -65,6 +65,17 @@ Both named projects document OpenAI-compatible endpoints. This release was teste
 
 Capabilities are configured per connection. Separate connections can use the same endpoint with different model lists and capabilities. Unsupported settings cause explicit errors rather than silent omission. The settings dialog hides unsupported controls.
 
+## Response statistics
+
+Each assistant message shows generation statistics after the response ends:
+
+- **PP** is prompt-processing speed in tokens/s. **TG** is token-generation speed in tokens/s. These are the model server's reported rates, not estimates from chat duration.
+- Input and output token counts use upstream usage. If usage is absent, llama.cpp timing counts are used. "Input tokens (timed)" can exclude cached input. llama.cpp output counts include reasoning tokens and the answer. Other providers define their own counts. A separate reasoning count appears only if the provider reports it.
+- Duration is the chat server's time from model request start to response end or failure. First text is the time from request start to the first nonempty answer or reasoning delta. Both include queue and transport time. First text is unavailable for non-streaming JSON responses.
+- MTP accepted / drafted shows accepted and proposed multi-token prediction tokens when the model server reports them.
+
+Streaming requests ask for usage with `stream_options.include_usage`. The final usage-only chunk can also contain llama.cpp timings. Validated numeric usage, timings, and chat-server observations are saved with each response and retained in native exports. No database migration is required. Missing or invalid values show "unavailable". Historical messages show only recorded data. Stopped or failed streams often have no final upstream statistics. A hard crash can also leave no chat-server observations.
+
 ## Use another device
 
 Both devices must use the same chat server address and owner password. The default address listens only on the server itself.

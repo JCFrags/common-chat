@@ -180,6 +180,18 @@ docker compose run --rm chat node scripts/reset-password.mjs
 
 The reset uses the `CHAT_PASSWORD` supplied by Compose. The value must contain at least 12 characters.
 
+## Response statistics
+
+Assistant messages retain numeric upstream `usage` and `timings` in metadata. The server keeps recognized token counts, usage detail counts, and llama.cpp fields `prompt_n`, `prompt_ms`, `prompt_per_second`, `predicted_n`, `predicted_ms`, `predicted_per_second`, `draft_n`, and `draft_n_accepted`. Counts must be nonnegative safe integers. Times and rates must be finite, nonnegative numbers within the safe numeric range. Unknown fields and invalid values are not stored.
+
+PP and TG display upstream `prompt_per_second` and `predicted_per_second` in tokens/s. The application does not calculate replacement rates from response duration. Input/output counts prefer `prompt_tokens`/`completion_tokens`, then `prompt_n`/`predicted_n`. A fallback input count is labeled "timed" because caching can reduce it. llama.cpp output counts include reasoning and answer tokens. Other providers define their own counts. A separate reasoning token count is shown only when `completion_tokens_details.reasoning_tokens` is available. MTP accepted / drafted uses `draft_n_accepted`/`draft_n`.
+
+The saved `observed.durationMs` uses a monotonic clock from model request start to response end or failure. `observed.firstTextMs` stops at the first nonempty answer or reasoning delta in an actual stream. These observations include queue, transport, and response processing time. They are not model execution timings. Buffered JSON responses retain duration but cannot expose first-text latency, even if streaming was requested. Displayed rates and seconds are rounded to two decimals. Raw validated values remain in metadata.
+
+Streaming requests use the standard `stream_options: { include_usage: true }`. llama.cpp can return usage and timings in a final event with no choices. Providers without these fields remain usable but show unavailable statistics. If an endpoint rejects the standard usage option, disable streaming for that connection to use its JSON response. The application does not retry a rejected generation automatically.
+
+Metadata uses the existing JSON column and native export/import format. Old messages need no migration and receive no invented values. Cancelled, interrupted, and failed responses retain observed timings when the server can finish the job, but upstream statistics may be absent. Hard crashes can leave no timing observations. Reloading the conversation reads the saved values rather than measuring browser rendering time.
+
 ## Recovery and troubleshooting
 
 A normal stop flushes active responses and marks them interrupted. A hard crash can leave a stale process lock. On the same host, the next startup removes a lock whose process no longer exists.

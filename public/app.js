@@ -99,6 +99,29 @@ function pathMessages(c) {
   while (leaf && map.has(leaf) && !seen.has(leaf)) { seen.add(leaf); const m = map.get(leaf); path.push(m); leaf = m.parentId; }
   return path.reverse();
 }
+function statisticsHtml(m) {
+  if (m.role !== 'assistant') return '';
+  if (m.status === 'streaming') return '<div class="message-meta">Statistics pending until the response ends.</div>';
+  const { usage = {}, timings = {}, observed = {} } = m.metadata;
+  const valid = (n, integer = false) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER && (!integer || Number.isSafeInteger(n));
+  const count = n => valid(n, true) ? String(n) : 'unavailable';
+  const rate = n => valid(n) ? `${n.toFixed(2)} tokens/s` : 'unavailable';
+  const seconds = n => valid(n) ? `${(n / 1000).toFixed(2)} s` : 'unavailable';
+  const metric = (label, value, help) => `<div title="${esc(help)}"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
+  const u = usage ?? {}, t = timings ?? {}, o = observed ?? {};
+  const inputFromUsage = valid(u.prompt_tokens, true), outputFromUsage = valid(u.completion_tokens, true);
+  const items = [
+    metric('PP', rate(t.prompt_per_second), 'Prompt-processing speed reported by the model server. Not estimated from chat duration.'),
+    metric('TG', rate(t.predicted_per_second), 'Token-generation speed reported by the model server. Includes reasoning when the provider counts it.'),
+    metric(inputFromUsage || !valid(t.prompt_n, true) ? 'Input tokens' : 'Input tokens (timed)', count(inputFromUsage ? u.prompt_tokens : t.prompt_n), 'Upstream prompt_tokens, or prompt_n if usage is absent. The timed count can exclude cached input.'),
+    metric('Output tokens', count(outputFromUsage ? u.completion_tokens : t.predicted_n), 'Upstream completion_tokens, or predicted_n if usage is absent. For llama.cpp this includes reasoning, not just the visible answer. Other providers define their own token counts.'),
+    metric('Duration', seconds(o.durationMs), 'Chat server observation from the model request start to response end or failure. Includes queue, transport, and response processing time.'),
+    metric('First text', o.responseMode === 'non-streaming' ? 'unavailable (non-streaming)' : seconds(o.firstTextMs), 'Chat server observation from request start to the first nonempty answer or reasoning delta. A buffered JSON response cannot expose this latency.')
+  ];
+  if (valid(u.completion_tokens_details?.reasoning_tokens, true)) items.push(metric('Reasoning tokens', count(u.completion_tokens_details.reasoning_tokens), 'Reasoning token count reported separately by the provider. Not estimated from reasoning text.'));
+  if (valid(t.draft_n, true) || valid(t.draft_n_accepted, true)) items.push(metric('MTP accepted / drafted', `${count(t.draft_n_accepted)} / ${count(t.draft_n)}`, 'Multi-token prediction (MTP) counts reported by the model server. Accepted draft tokens / proposed draft tokens.'));
+  return `<div class="message-stats" role="group" aria-label="Generation statistics"><dl>${items.join('')}</dl><p>PP/TG: upstream. Duration/first text: chat server. First text includes reasoning. llama.cpp output counts include reasoning. Unavailable means not reported or not recorded.</p></div>`;
+}
 function messageHtml(m, c) {
   if (!m.content && !m.reasoning && m.role === 'system' && !m.attachments.length) return '';
   const siblings = c.messages.filter(x => x.parentId === m.parentId && x.role === m.role).sort((a,b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
@@ -114,9 +137,8 @@ function messageHtml(m, c) {
   const branches = siblings.length > 1 ? `<button data-branch="${esc(siblings[Math.max(0,index-1)].id)}" ${index === 0 || active ? 'disabled' : ''}>Previous</button><span class="branch-count">${index+1} / ${siblings.length}</span><button data-branch="${esc(siblings[Math.min(siblings.length-1,index+1)].id)}" ${index === siblings.length-1 || active ? 'disabled' : ''}>Next</button>` : '';
   const error = m.metadata.error ? `<div class="message-error">${esc(m.metadata.error)}</div>` : '';
   const unsupported = m.metadata.unsupportedAttachments?.length ? `<div class="message-error">Archived attachments are retained in the export but cannot be sent: ${m.metadata.unsupportedAttachments.map(esc).join(', ')}.</div>` : '';
-  const usage = m.metadata.usage?.completion_tokens;
-  const meta = `${m.providerName ? esc(m.providerName) : ''}${usage !== undefined ? ` · ${esc(usage)} output tokens` : ''}${m.metadata.finishReason === 'length' ? ' · Output token limit reached' : ''}`;
-  return `<article class="message ${esc(m.role)}" data-message="${esc(m.id)}"><div class="message-header"><strong>${esc(label)}</strong>${status}</div>${thinking}<div class="message-body">${body || (m.status === 'streaming' ? '<span class="muted">Generating...</span>' : '')}</div>${files ? `<div class="file-links">${files}</div>` : ''}${error}${unsupported}${meta ? `<div class="message-meta">${meta}</div>` : ''}<div class="message-actions">${actions}${branches}</div></article>`;
+  const meta = `${m.providerName ? esc(m.providerName) : ''}${m.metadata.finishReason === 'length' ? ' · Output token limit reached' : ''}`;
+  return `<article class="message ${esc(m.role)}" data-message="${esc(m.id)}"><div class="message-header"><strong>${esc(label)}</strong>${status}</div>${thinking}<div class="message-body">${body || (m.status === 'streaming' ? '<span class="muted">Generating...</span>' : '')}</div>${files ? `<div class="file-links">${files}</div>` : ''}${error}${unsupported}${meta ? `<div class="message-meta">${meta}</div>` : ''}${statisticsHtml(m)}<div class="message-actions">${actions}${branches}</div></article>`;
 }
 function renderThread(forceBottom = false) {
   const thread = $('#thread'), top = thread.scrollTop, bottom = thread.scrollHeight - top - thread.clientHeight < 110;

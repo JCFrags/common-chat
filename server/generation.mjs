@@ -1,5 +1,5 @@
 import { id, now, fail, hash, object, text, settings as validateSettings } from './validation.mjs';
-import { sseRecords, headers, errorText, responseError, limitedText, deltaText } from './provider.mjs';
+import { sseRecords, headers, errorText, responseError, limitedText, deltaText, usageStats, timingStats } from './provider.mjs';
 
 export class Generations {
   constructor(store, emit, options = {}) {
@@ -85,6 +85,7 @@ export class Generations {
     // Construct and validate the exact request before changing durable state.
     const messages = this.requestMessages(cid, parentId, regenerate ? null : { id: userId, role: 'user', content, attachments: uploaded }, settings);
     const payload = { model, messages, stream: p.capabilities.streaming };
+    if (payload.stream) payload.stream_options = { include_usage: true };
     if (settings.temperature !== undefined) payload.temperature = settings.temperature;
     if (settings.topP !== undefined) payload.top_p = settings.topP;
     if (settings.maxTokens !== undefined) payload[p.capabilities.tokenParameter] = settings.maxTokens;
@@ -113,8 +114,10 @@ export class Generations {
   }
   async run(jobId, state, provider, payload) {
     const { cid, assistantId, controller } = state;
-    let content = '', reasoning = '', finishReason = null, usage = null, status = 'complete', failure = null;
-    let dirty = false, lastFlush = 0, completed = false;
+    let content = '', reasoning = '', finishReason = null, usage = null, timings = null, status = 'complete', failure = null;
+    let dirty = false, lastFlush = 0, completed = false, firstTextMs = null, responseMode = null;
+    // These observations include upstream queue and transport time, unlike model timings.
+    const started = performance.now();
     const flush = (force = false) => {
       if (!force && (!dirty || now() - lastFlush < 100)) return;
       this.store.transaction(() => {
@@ -128,13 +131,17 @@ export class Generations {
     const timer = setInterval(() => { if (dirty) flush(); }, 100);
     const consume = json => {
       if (json.error) throw new Error('The model server reported an error. Check its logs.');
-      if (json.usage) usage = json.usage;
+      const nextUsage = usageStats(json.usage), nextTimings = timingStats(json.timings);
+      if (nextUsage) usage = { ...usage, ...nextUsage };
+      if (nextTimings) timings = { ...timings, ...nextTimings };
       const choice = json.choices?.[0];
       if (!choice) return;
       const delta = choice.delta ?? choice.message ?? {};
       if (delta.tool_calls?.length || delta.function_call) throw new Error('The model returned tool calls. This version does not execute tools.');
-      content += deltaText(delta.content);
-      reasoning += deltaText(delta.reasoning_content ?? delta.reasoning);
+      const textDelta = deltaText(delta.content), reasoningDelta = deltaText(delta.reasoning_content ?? delta.reasoning);
+      if (responseMode === 'streaming' && firstTextMs === null && (textDelta || reasoningDelta)) firstTextMs = performance.now() - started;
+      content += textDelta;
+      reasoning += reasoningDelta;
       if (content.length + reasoning.length > this.maxCharacters) throw new Error('The generated output exceeds the 2 MiB limit.');
       if (choice.finish_reason) { finishReason = choice.finish_reason; completed = true; }
       dirty = true; flush();
@@ -146,10 +153,12 @@ export class Generations {
         body: JSON.stringify(payload), redirect: 'error', signal });
       if (!response.ok) await responseError(response, provider);
       if ((response.headers.get('content-type') ?? '').includes('application/json')) {
+        responseMode = 'non-streaming';
         const json = JSON.parse(await limitedText(response, 8 * 1024 * 1024));
         if (!json.choices?.length) throw new Error('The model server returned no choices.');
         consume(json); completed = true;
       } else {
+        responseMode = 'streaming';
         for await (const data of sseRecords(response.body)) {
           if (data.trim() === '[DONE]') { completed = true; break; }
           let parsed; try { parsed = JSON.parse(data); } catch { throw new Error('The model server returned malformed stream data.'); }
@@ -162,11 +171,12 @@ export class Generations {
       else if (state.reason === 'shutdown') { status = 'interrupted'; failure = 'The chat server stopped. The partial response is saved.'; }
       else { status = 'error'; failure = errorText(error, provider.apiKey); }
     } finally {
+      const observed = { durationMs: performance.now() - started, firstTextMs, responseMode };
       clearInterval(timer);
       // Every successful generation and every failure ends in a durable terminal state.
       this.store.transaction(() => {
         this.store.run('UPDATE messages SET content=?,reasoning=?,status=?,metadata=?,updated_at=? WHERE id=?',
-          content, reasoning, status, JSON.stringify({ finishReason, usage, error: failure }), now(), assistantId);
+          content, reasoning, status, JSON.stringify({ finishReason, usage, timings, observed, error: failure }), now(), assistantId);
         this.store.run('UPDATE jobs SET status=?,error=?,updated_at=? WHERE id=?', status, failure, now(), jobId);
         this.store.touch(cid);
       });

@@ -6,7 +6,7 @@ export async function mockModel() {
   const server = createServer(async (req, res) => {
     if (req.url === '/v1/models') {
       res.writeHead(200, { 'Content-Type':'application/json' });
-      res.end(JSON.stringify({ data: ['demo-model','slow','plain','truncated','error','tools','malformed','redirect'].map(id => ({ id })) })); return;
+      res.end(JSON.stringify({ data: ['demo-model','slow','plain','stats','truncated','error','tools','malformed','redirect'].map(id => ({ id })) })); return;
     }
     if (req.url === '/leak') { requests.push({ leaked: true }); res.end('leak'); return; }
     if (req.url !== '/v1/chat/completions' || req.method !== 'POST') { res.writeHead(404); res.end(); return; }
@@ -23,6 +23,7 @@ export async function mockModel() {
     if (input.model === 'malformed') { res.end('data: {invalid\n\n'); return; }
     if (input.model === 'tools') { emit({ choices:[{ delta:{ tool_calls:[{ id:'call1', function:{ name:'x' } }] } }] }); res.end(); return; }
     emit({ choices:[{ delta:{ reasoning_content:'Consider the request. ' } }] });
+    if (input.model === 'stats') await delay(80);
     const words = input.model === 'slow'
       ? ['This ', 'response ', 'continues ', 'after ', 'a ', 'browser ', 'disconnects. ', ...Array(25).fill('More ')]
       : ['Hello ', 'from ', 'the ', 'test ', 'model. ', '🌍'];
@@ -32,7 +33,11 @@ export async function mockModel() {
       await delay(input.model === 'slow' ? 60 : 25);
     }
     if (input.model !== 'truncated') {
-      emit({ choices:[{ delta:{}, finish_reason:'stop' }], usage:{ prompt_tokens:9, completion_tokens:words.length } });
+      emit({ choices:[{ delta:{}, finish_reason:'stop' }] });
+      // The final usage event has no choices, as in llama.cpp's compatible endpoint.
+      if (input.stream_options?.include_usage) emit({ choices:[], usage:{ prompt_tokens:9, completion_tokens:words.length },
+        ...(input.model === 'stats' ? { timings:{ prompt_n:7, prompt_ms:20, prompt_per_second:350,
+          predicted_n:6, predicted_ms:60, predicted_per_second:100, draft_n:10, draft_n_accepted:4 } } : {}) });
       res.write('data: [DONE]\n\n');
     }
     res.end();
