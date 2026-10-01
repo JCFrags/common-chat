@@ -54,6 +54,14 @@
         observer.observe(container);
       }
       let dark = event.data.dark === true, api, rendering = false, version = 0;
+      function updateCanvas() {
+        if (!diagramOnly) return;
+        // Match theme.css exactly when an opaque frame cannot composite transparency.
+        const background = dark ? 'oklch(0.16 0 0)' : 'oklch(1 0 0)';
+        document.documentElement.style.backgroundColor = document.body.style.backgroundColor = background;
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      }
+      updateCanvas();
       // Input styles and configuration still take priority over these defaults.
       async function renderDiagram() {
         if (!api || rendering) return;
@@ -64,7 +72,7 @@
             renderedDark = dark;
             api.initialize({ startOnLoad: false, securityLevel: 'loose', htmlLabels: true, maxTextSize: 128 * 1024,
               theme: 'base', fontFamily: 'ui-sans-serif, system-ui, sans-serif',
-              themeVariables: { darkMode: dark, background: dark ? '#161616' : '#ffffff', primaryColor: dark ? '#303030' : '#eeeeee', primaryTextColor: dark ? '#fafafa' : '#0a0a0a', primaryBorderColor: dark ? '#b5b5b5' : '#707070', lineColor: dark ? '#b5b5b5' : '#707070', secondaryColor: dark ? '#404040' : '#f5f5f5', tertiaryColor: dark ? '#383838' : '#fafafa' },
+              themeVariables: { darkMode: dark, background: dark ? '#0d0d0d' : '#ffffff', primaryColor: dark ? '#303030' : '#eeeeee', primaryTextColor: dark ? '#fafafa' : '#0a0a0a', primaryBorderColor: dark ? '#b5b5b5' : '#707070', lineColor: dark ? '#b5b5b5' : '#707070', secondaryColor: dark ? '#404040' : '#f5f5f5', tertiaryColor: dark ? '#383838' : '#fafafa' },
             });
             const result = await api.render(`sandbox-diagram-${++version}`, mermaid);
             container.innerHTML = result.svg; result.bindFunctions?.(container);
@@ -75,7 +83,7 @@
       }
       port.onmessage = event => {
         if (event.data?.type !== 'common-chat-theme' || typeof event.data.dark !== 'boolean' || event.data.dark === dark) return;
-        dark = event.data.dark; renderDiagram();
+        dark = event.data.dark; updateCanvas(); renderDiagram();
       };
       // Input styling and callbacks are allowed only inside this opaque sandbox.
       import(`${chatOrigin}/sandbox-mermaid.js`).then(({ default: loaded }) => { api = loaded; renderDiagram(); }).catch(error => report('error', String(error.message || error)));

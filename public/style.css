@@ -147,6 +147,7 @@ th, td { border: 1px solid var(--border); text-align: left; padding: 8px 12px; }
 .artifact-actions > summary { cursor: pointer; border-radius: var(--radius); list-style: none; display: flex; align-items: center; }
 .artifact-actions > summary::-webkit-details-marker { display: none; }
 .artifact-actions[open] > summary, .artifact-actions > summary:hover { background: var(--accent); }
+.artifact-actions:not([open]) > .artifact-actions-panel { display: none; }
 .artifact-actions-panel { position: absolute; top: 100%; right: 0; z-index: 5; width: 220px; max-width: calc(100vw - 40px); padding: 5px; display: flex; flex-direction: column; gap: 2px; background: var(--popover); color: var(--popover-foreground); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 4px 16px #0002; }
 .artifact-actions-panel button { justify-content: flex-start; text-align: left; }
 .artifact-safety { padding: 5px 8px; font-size: 11px; line-height: 1.5; color: var(--muted-foreground); }
