@@ -1,0 +1,5 @@
+
+> common-chat@0.1.0 check
+> node scripts/check.mjs
+
+Syntax checked 24 JavaScript modules.

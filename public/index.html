@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Common Chat</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <section id="login-screen">
+    <div class="login-card">
+      <div class="brand-mark" data-icon="chat"></div>
+      <h1>Common Chat</h1>
+      <p class="muted intro">Your models. One conversation history.</p>
+      <form id="login-form">
+        <label for="password">Server password</label>
+        <input id="password" type="password" autocomplete="current-password" required autofocus>
+        <button class="primary" id="login-button" type="submit">Sign in</button>
+        <p id="login-error" class="error" role="alert"></p>
+      </form>
+      <p class="muted login-footer">Use the same server address on each device.<br>For the initial password, check the server terminal.</p>
+    </div>
+  </section>
+  <div id="app" hidden>
+    <button id="sidebar-backdrop" aria-label="Close sidebar"></button>
+    <aside id="sidebar">
+      <div class="brand row"><div class="brand-mark" data-icon="chat"></div><span class="brand-name">Common Chat</span><span class="badge">0.1</span></div>
+      <button id="new-chat"><span data-icon="plus"></span>New chat</button>
+      <div class="search"><span data-icon="search"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations"></div>
+      <div class="sidebar-caption">Conversations</div>
+      <nav id="conversation-list" aria-label="Conversations"></nav>
+      <div class="sidebar-footer">
+        <button id="connections-button"><span data-icon="plug"></span>Connections</button>
+        <button id="import-button"><span data-icon="upload"></span>Import conversations</button>
+        <button id="preferences-button"><span data-icon="settings"></span>Settings and data</button>
+        <div class="server-status"><span class="status-dot"></span><span id="sync-status">Connecting</span></div>
+      </div>
+    </aside>
+    <main id="main">
+      <header id="topbar">
+        <button class="ghost icon mobile-only" id="sidebar-toggle" aria-label="Open sidebar" data-icon="menu"></button>
+        <div id="model-controls">
+          <select id="provider-select" aria-label="Model connection"><option value="">Add a connection</option></select>
+          <input id="model-input" list="model-options" placeholder="Select or enter a model" aria-label="Model name" autocomplete="off">
+          <datalist id="model-options"></datalist>
+        </div>
+        <div class="toolbar">
+          <button class="ghost icon desktop-only" id="refresh-models" aria-label="Refresh model list" title="Refresh model list" data-icon="refresh"></button>
+          <button class="ghost icon" id="generation-button" aria-label="Generation settings" title="Generation settings" data-icon="sliders"></button>
+          <button class="ghost icon" id="conversation-button" aria-label="Conversation actions" title="Conversation actions" data-icon="more"></button>
+        </div>
+      </header>
+      <section id="thread" aria-label="Messages"></section>
+      <div id="composer-area">
+        <div class="composer-inner">
+          <div id="draft-banner" hidden><span id="draft-label"></span><button class="ghost" id="cancel-edit">Cancel edit</button></div>
+          <form id="composer">
+            <div id="attachment-list"></div>
+            <textarea id="prompt" rows="2" placeholder="Message your model..." aria-label="Message"></textarea>
+            <div class="composer-controls">
+              <div class="row"><button type="button" class="ghost icon" id="attach-button" aria-label="Attach files" title="Attach images or UTF-8 text" data-icon="attach"></button><span class="composer-hint">Enter to send. Shift+Enter for a new line.</span></div>
+              <button type="button" id="stop" hidden><span data-icon="stop"></span>Stop</button>
+              <button type="submit" class="primary" id="send">Send<span data-icon="send"></span></button>
+            </div>
+          </form>
+          <div class="composer-footer">History is stored on this server. Review model output before use.</div>
+        </div>
+      </div>
+    </main>
+  </div>
+  <input id="file-input" type="file" multiple hidden accept="image/png,image/jpeg,image/webp,image/gif,text/*,.py,.js,.ts,.json,.md,.rs,.go,.c,.cpp,.h,.yaml,.yml,.toml,.log,.csv,.sh,.html,.xml,.css">
+  <input id="import-input" type="file" hidden accept=".json,.jsonl,.zip">
+  <dialog id="connections-dialog">
+    <div class="dialog-header"><div><h2>Model connections</h2><p class="small">The chat server sends requests to these endpoints.</p></div><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div>
+    <form id="connection-form" class="stack">
+      <label class="field">Connection<select id="edit-provider"><option value="">New connection</option></select></label>
+      <div class="form-grid"><label class="field">Name<input id="connection-name" required placeholder="Local model server" maxlength="100"></label><label class="field">Base URL<input id="connection-url" type="url" required placeholder="http://localhost:8080/v1"></label></div>
+      <label class="field">API key<input id="connection-key" type="password" autocomplete="new-password" placeholder="Optional. Leave blank to keep the saved key."><small>Saved keys are encrypted on the server and are never returned to the browser.</small></label>
+      <label class="check"><input id="connection-clear-key" type="checkbox">Remove the saved API key</label>
+      <label class="field">Model names<textarea id="connection-models" rows="2" placeholder="One model per line. Leave empty to use the /models endpoint."></textarea></label>
+      <fieldset><legend>Enabled capabilities</legend><div class="checks">
+        <label class="check"><input id="cap-streaming" type="checkbox" checked>Streaming</label>
+        <label class="check"><input id="cap-vision" type="checkbox">Image input</label>
+        <label class="check"><input id="cap-systemPrompt" type="checkbox" checked>System prompts</label>
+        <label class="check"><input id="cap-temperature" type="checkbox" checked>Temperature</label>
+        <label class="check"><input id="cap-topP" type="checkbox" checked>Top-p</label>
+        <label class="check"><input id="cap-maxTokens" type="checkbox" checked>Output token limit</label>
+      </div></fieldset>
+      <label class="field">Token limit parameter<select id="token-parameter"><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select><small>Enable only capabilities supported by the endpoint and selected models. Use separate connections for different capability sets.</small></label>
+      <p class="error" id="connection-error" role="alert"></p>
+      <div class="dialog-footer"><button type="button" class="ghost danger" id="delete-provider" hidden>Delete connection</button><button type="submit" class="primary" id="save-provider">Save connection</button></div>
+    </form>
+  </dialog>
+  <dialog id="generation-dialog">
+    <div class="dialog-header"><div><h2>Generation settings</h2><p class="small">Settings apply to this conversation. Blank fields use provider defaults.</p></div><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div>
+    <form id="generation-form" class="stack">
+      <label class="field" id="field-systemPrompt">System prompt<textarea id="system-prompt" rows="5" placeholder="Optional instructions for this conversation"></textarea></label>
+      <div class="form-grid">
+        <label class="field" id="field-temperature">Temperature<input id="temperature" type="number" min="0" max="2" step="0.01" placeholder="Provider default"></label>
+        <label class="field" id="field-topP">Top-p<input id="top-p" type="number" min="0" max="1" step="0.01" placeholder="Provider default"></label>
+        <label class="field" id="field-maxTokens">Output token limit<input id="max-tokens" type="number" min="1" max="1000000" step="1" placeholder="Provider default"></label>
+      </div>
+      <p class="small">Unsupported controls are hidden. Saving removes unsupported settings. Each response retains its own generation settings.</p>
+      <p id="generation-error" class="error" role="alert"></p>
+      <div class="dialog-footer"><button type="button" class="ghost" id="reset-generation">Use provider defaults</button><button type="submit" class="primary">Save settings</button></div>
+    </form>
+  </dialog>
+  <dialog id="preferences-dialog">
+    <div class="dialog-header"><h2>Settings and data</h2><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div>
+    <div class="stack">
+      <label class="field">Appearance<select id="theme-select"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+      <section><h3>Conversation history</h3><p class="small">Export messages, branches, and attachments as JSON. Exports do not include login credentials or connection keys.</p><button id="export-all"><span data-icon="download"></span>Export all conversations</button></section>
+      <section><h3>Server storage</h3><p class="small">This version uses one shared owner account. For a full backup, stop the server and copy the data directory. Keep master.key with the database.</p></section>
+      <section><h3>About this version</h3><p class="small">Common Chat 0.1.0. A standalone implementation with theme tokens adapted from llama.cpp. This is not the full upstream Svelte application.</p></section>
+      <div class="dialog-footer"><button id="logout">Sign out on this device</button></div>
+    </div>
+  </dialog>
+  <dialog id="conversation-dialog">
+    <div class="dialog-header"><h2>Conversation</h2><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div>
+    <form id="rename-form" class="stack"><label class="field">Title<input id="conversation-title" required maxlength="500"></label><button type="submit" class="primary">Save title</button><p class="error" id="conversation-error" role="alert"></p></form>
+    <div class="row spread"><button id="export-conversation">Export conversation</button><button id="delete-conversation" class="danger">Delete conversation</button></div>
+  </dialog>
+  <dialog id="import-dialog"><div class="dialog-header"><h2>Import result</h2><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div><p id="import-output"></p></dialog>
+  <div id="toast" hidden role="status"></div>
+</body>
+</html>

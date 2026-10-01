@@ -1,0 +1,52 @@
+{
+  "conv": {
+    "id": "example-conversation",
+    "name": "Imported branch example",
+    "currNode": "answer-b",
+    "lastModified": 1700000003000
+  },
+  "messages": [
+    {
+      "id": "question",
+      "convId": "example-conversation",
+      "parent": null,
+      "children": [
+        "answer-a",
+        "answer-b"
+      ],
+      "role": "user",
+      "type": "text",
+      "content": "Where should my chat history live?",
+      "timestamp": 1700000000000,
+      "extra": [
+        {
+          "type": "text",
+          "name": "context.txt",
+          "content": "Use one personal chat server."
+        }
+      ]
+    },
+    {
+      "id": "answer-a",
+      "convId": "example-conversation",
+      "parent": "question",
+      "children": [],
+      "role": "assistant",
+      "type": "text",
+      "content": "Store it on the chat server.",
+      "timestamp": 1700000001000,
+      "model": "example-model"
+    },
+    {
+      "id": "answer-b",
+      "convId": "example-conversation",
+      "parent": "question",
+      "children": [],
+      "role": "assistant",
+      "type": "text",
+      "content": "Store conversations and attachments on the server so each device accesses the same history.",
+      "timestamp": 1700000002000,
+      "model": "example-model"
+    }
+  ]
+}

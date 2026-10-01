@@ -1,0 +1,27 @@
+services:
+  chat:
+    build: .
+    init: true
+    restart: unless-stopped
+    environment:
+      HOST: 0.0.0.0
+      PORT: "3000"
+      DATA_DIR: /app/data
+      PUBLIC_URL: ${PUBLIC_URL:-http://localhost:3000}
+      CHAT_PASSWORD: ${CHAT_PASSWORD:-}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PORT:-3000}:3000"
+    volumes:
+      - chat-data:/app/data
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    stop_grace_period: 30s
+volumes:
+  chat-data:

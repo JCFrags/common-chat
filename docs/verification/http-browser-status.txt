@@ -1,0 +1,6 @@
+Full HTTP browser acceptance test: BLOCKED
+
+The initial page.goto() call failed with net::ERR_BLOCKED_BY_ADMINISTRATOR.
+Managed Chromium policy blocked local HTTP navigation.
+No full browser acceptance pass is claimed. Browser policy was not changed.
+The separate offline fixture results do not substitute for this acceptance test.

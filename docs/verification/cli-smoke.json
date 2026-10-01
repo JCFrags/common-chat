@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "checks": [
+    "npm start with a fresh data directory",
+    "all six static assets and their MIME types",
+    "Content Security Policy headers",
+    "owner sign-in and session",
+    "conversation creation",
+    "health check with a configured Host header",
+    "graceful shutdown and lock removal"
+  ]
+}

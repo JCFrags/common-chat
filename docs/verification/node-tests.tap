@@ -1,0 +1,246 @@
+
+> common-chat@0.1.0 test
+> node --test --test-concurrency=1 tests/*.test.mjs
+
+TAP version 13
+# Subtest: SIGKILL recovery retains committed partial output, sessions, and encrypted keys
+ok 1 - SIGKILL recovery retains committed partial output, sessions, and encrypted keys
+  ---
+  duration_ms: 576.827816
+  type: 'test'
+  ...
+# (node:1970) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Authentication protects chats and attachments and uses HttpOnly SameSite cookies
+ok 2 - Authentication protects chats and attachments and uses HttpOnly SameSite cookies
+  ---
+  duration_ms: 216.118696
+  type: 'test'
+  ...
+# Subtest: Provider keys are encrypted at rest and absent from API and export responses
+ok 3 - Provider keys are encrypted at rest and absent from API and export responses
+  ---
+  duration_ms: 90.316746
+  type: 'test'
+  ...
+# Subtest: Streaming saves content, reasoning, model provenance, usage, and exact generation settings
+ok 4 - Streaming saves content, reasoning, model provenance, usage, and exact generation settings
+  ---
+  duration_ms: 242.959931
+  type: 'test'
+  ...
+# Subtest: Two independent sessions read the same server history
+ok 5 - Two independent sessions read the same server history
+  ---
+  duration_ms: 278.843643
+  type: 'test'
+  ...
+# Subtest: Closing an SSE browser connection does not stop generation
+ok 6 - Closing an SSE browser connection does not stop generation
+  ---
+  duration_ms: 2037.347891
+  type: 'test'
+  ...
+# Subtest: Idempotent retries create one model request and one message pair
+ok 7 - Idempotent retries create one model request and one message pair
+  ---
+  duration_ms: 241.91214
+  type: 'test'
+  ...
+# Subtest: Concurrent submissions and stale edits are rejected without duplicate messages
+ok 8 - Concurrent submissions and stale edits are rejected without duplicate messages
+  ---
+  duration_ms: 92.587912
+  type: 'test'
+  ...
+# Subtest: Cancellation retains partial text and records a terminal cancelled state
+ok 9 - Cancellation retains partial text and records a terminal cancelled state
+  ---
+  duration_ms: 316.61603
+  type: 'test'
+  ...
+# Subtest: Truncated streams preserve partial output and are not marked complete
+ok 10 - Truncated streams preserve partial output and are not marked complete
+  ---
+  duration_ms: 245.552065
+  type: 'test'
+  ...
+# Subtest: Non-streaming JSON providers work
+ok 11 - Non-streaming JSON providers work
+  ---
+  duration_ms: 106.645164
+  type: 'test'
+  ...
+# Subtest: Provider errors, tool calls, malformed data, and redirects fail explicitly
+ok 12 - Provider errors, tool calls, malformed data, and redirects fail explicitly
+  ---
+  duration_ms: 201.405129
+  type: 'test'
+  ...
+# Subtest: Unsupported capabilities reject requests before saving a user message
+ok 13 - Unsupported capabilities reject requests before saving a user message
+  ---
+  duration_ms: 86.318808
+  type: 'test'
+  ...
+# Subtest: Text attachments persist, are included in context, and cannot cross conversations
+ok 14 - Text attachments persist, are included in context, and cannot cross conversations
+  ---
+  duration_ms: 254.048273
+  type: 'test'
+  ...
+# Subtest: Regeneration creates siblings and edited user messages preserve the original branch
+ok 15 - Regeneration creates siblings and edited user messages preserve the original branch
+  ---
+  duration_ms: 570.73569
+  type: 'test'
+  ...
+# Subtest: Legacy import preserves branches, timestamps, reasoning, and unknown source metadata
+ok 16 - Legacy import preserves branches, timestamps, reasoning, and unknown source metadata
+  ---
+  duration_ms: 89.22845
+  type: 'test'
+  ...
+# Subtest: JSONL import supports current upstream session records
+ok 17 - JSONL import supports current upstream session records
+  ---
+  duration_ms: 86.032993
+  type: 'test'
+  ...
+# Subtest: Invalid imports are atomic and reject cycles and missing parents
+ok 18 - Invalid imports are atomic and reject cycles and missing parents
+  ---
+  duration_ms: 88.205612
+  type: 'test'
+  ...
+# Subtest: Unsupported imported files remain in exports and block silent context loss
+ok 19 - Unsupported imported files remain in exports and block silent context loss
+  ---
+  duration_ms: 89.446142
+  type: 'test'
+  ...
+# Subtest: Native export/import round trip retains attachments and branch structure
+ok 20 - Native export/import round trip retains attachments and branch structure
+  ---
+  duration_ms: 249.126399
+  type: 'test'
+  ...
+# Subtest: Data and sessions survive a server restart, and orphaned jobs become interrupted
+ok 21 - Data and sessions survive a server restart, and orphaned jobs become interrupted
+  ---
+  duration_ms: 241.925687
+  type: 'test'
+  ...
+# Subtest: Deleting a conversation removes its messages and attachment files
+ok 22 - Deleting a conversation removes its messages and attachment files
+  ---
+  duration_ms: 82.825391
+  type: 'test'
+  ...
+# Subtest: Vision attachments reach a capable model and are rejected by a text-only connection
+ok 23 - Vision attachments reach a capable model and are rejected by a text-only connection
+  ---
+  duration_ms: 257.624564
+  type: 'test'
+  ...
+# Subtest: The API imports a current JSONL ZIP and rejects non-UTF-8 imports without writes
+ok 24 - The API imports a current JSONL ZIP and rejects non-UTF-8 imports without writes
+  ---
+  duration_ms: 87.545649
+  type: 'test'
+  ...
+# (node:1981) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: Offline backup and restore preserve messages, files, and encrypted provider keys
+ok 25 - Offline backup and restore preserve messages, files, and encrypted provider keys
+  ---
+  duration_ms: 13.560138
+  type: 'test'
+  ...
+# Subtest: Restore rejects tampered bytes and unsafe paths before writing the destination
+ok 26 - Restore rejects tampered bytes and unsafe paths before writing the destination
+  ---
+  duration_ms: 4.172781
+  type: 'test'
+  ...
+# Subtest: A second server cannot use the same data directory concurrently
+ok 27 - A second server cannot use the same data directory concurrently
+  ---
+  duration_ms: 1.933429
+  type: 'test'
+  ...
+# Subtest: Password hashing uses distinct salts and preserves password verification
+ok 28 - Password hashing uses distinct salts and preserves password verification
+  ---
+  duration_ms: 160.577354
+  type: 'test'
+  ...
+# Subtest: SSE parsing handles byte-split UTF-8, CRLF, comments, multiple data lines, and EOF
+ok 29 - SSE parsing handles byte-split UTF-8, CRLF, comments, multiple data lines, and EOF
+  ---
+  duration_ms: 2.083582
+  type: 'test'
+  ...
+# Subtest: SSE parser rejects oversized events
+ok 30 - SSE parser rejects oversized events
+  ---
+  duration_ms: 40.888915
+  type: 'test'
+  ...
+# Subtest: Content arrays retain text only
+ok 31 - Content arrays retain text only
+  ---
+  duration_ms: 0.197393
+  type: 'test'
+  ...
+# Subtest: Settings preserve explicit zero and reject unsupported names and invalid numbers
+ok 32 - Settings preserve explicit zero and reject unsupported names and invalid numbers
+  ---
+  duration_ms: 0.45778
+  type: 'test'
+  ...
+# Subtest: Provider validation rejects credential URLs and non-HTTP schemes
+ok 33 - Provider validation rejects credential URLs and non-HTTP schemes
+  ---
+  duration_ms: 0.795089
+  type: 'test'
+  ...
+# Subtest: Attachments reject HTML-as-image, invalid UTF-8, NULs, bad base64, and unsupported binary files
+ok 34 - Attachments reject HTML-as-image, invalid UTF-8, NULs, bad base64, and unsupported binary files
+  ---
+  duration_ms: 0.569124
+  type: 'test'
+  ...
+# Subtest: Markdown escapes raw HTML and blocks script links and remote images
+ok 35 - Markdown escapes raw HTML and blocks script links and remote images
+  ---
+  duration_ms: 0.874417
+  type: 'test'
+  ...
+# Subtest: Markdown renders fences, headings, lists, and tables
+ok 36 - Markdown renders fences, headings, lists, and tables
+  ---
+  duration_ms: 0.456187
+  type: 'test'
+  ...
+# Subtest: Legacy JSON and current JSONL import parsing
+ok 37 - Legacy JSON and current JSONL import parsing
+  ---
+  duration_ms: 0.536216
+  type: 'test'
+  ...
+# Subtest: ZIP importer validates bounds and checksum without filesystem extraction
+ok 38 - ZIP importer validates bounds and checksum without filesystem extraction
+  ---
+  duration_ms: 1.376933
+  type: 'test'
+  ...
+1..38
+# tests 38
+# suites 0
+# pass 38
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 7287.012527

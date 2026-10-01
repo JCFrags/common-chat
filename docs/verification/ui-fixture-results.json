@@ -1,0 +1,42 @@
+{
+  "passed": 7,
+  "failed": 0,
+  "mode": "in-memory fixtures, no HTTP browser navigation",
+  "tests": [
+    {
+      "name": "desktop sign-in, model selection, chat rendering, draft clearing, and responsive layout",
+      "status": "passed",
+      "mode": "in-memory fixtures"
+    },
+    {
+      "name": "Generation settings, regeneration, edit branching, and branch selection",
+      "status": "passed",
+      "mode": "in-memory fixtures"
+    },
+    {
+      "name": "Connection editing and model selector refresh",
+      "status": "passed",
+      "mode": "in-memory fixtures"
+    },
+    {
+      "name": "desktop has no JavaScript page errors",
+      "status": "passed",
+      "mode": "in-memory fixtures"
+    },
+    {
+      "name": "mobile sign-in, model selection, chat rendering, draft clearing, and responsive layout",
+      "status": "passed",
+      "mode": "in-memory fixtures"
+    },
+    {
+      "name": "Mobile sidebar and connection dialog fit the viewport",
+      "status": "passed",
+      "mode": "in-memory fixtures"
+    },
+    {
+      "name": "mobile has no JavaScript page errors",
+      "status": "passed",
+      "mode": "in-memory fixtures"
+    }
+  ]
+}

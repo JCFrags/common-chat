@@ -1,0 +1,11 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createApp } from '../server/app.mjs';
+import { mockModel } from './mock-model.mjs';
+const dir=mkdtempSync(join(tmpdir(),'common-chat-browser-')),model=await mockModel(),password='browser-test-password';
+const app=await createApp({dataDir:dir,password,logErrors:true});
+const url=await app.listen(0);
+console.log(JSON.stringify({url,password,modelUrl:model.url,dataDir:dir}));
+let stopping=false;
+for(const signal of ['SIGINT','SIGTERM'])process.on(signal,async()=>{if(stopping)return;stopping=true;await app.close();await model.close();rmSync(dir,{recursive:true,force:true});process.exit(0);});
