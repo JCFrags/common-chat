@@ -1,0 +1,10 @@
+{
+  "rich-text.js": {
+    "bytes": 484610,
+    "sha256": "4fa8fc2c2b8e122a5e0b91d5cfeca89a598b9c730a3db859c0f05af27ce15df4"
+  },
+  "mermaid.js": {
+    "bytes": 2898937,
+    "sha256": "2eb8d7debd7e1a2a6c52087ee9810789a987f12711e2a86ddccf54939caefdba"
+  }
+}

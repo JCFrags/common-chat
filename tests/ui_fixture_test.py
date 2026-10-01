@@ -19,8 +19,12 @@ html = (ROOT / "public/index.html").read_text()
 html = re.sub(r'<link[^>]*>', '', html)
 html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.S)
 css = (ROOT / "public/theme.css").read_text() + '\n' + (ROOT / "public/style.css").read_text().replace("@import url('/theme.css');", '')
-markdown = (ROOT / "public/markdown.js").read_text().replace('export const ', 'const ').replace('export function ', 'function ')
-app = (ROOT / "public/app.js").read_text().replace("import { markdown, escape as esc } from './markdown.js';", 'const esc = escape;')
+app = (ROOT / "public/app.js").read_text()
+# Resolve ES modules from local files, not the network. The page remains an
+# offline in-memory fixture. This does not test the server's CSP.
+ASSET_ORIGIN = 'http://common-chat.fixture'
+ASSETS = {f'/{name}': ROOT / 'public' / name for name in
+          ['markdown.js', 'diagrams.js', 'touch.js', 'vendor/rich-text.js', 'vendor/mermaid.js']}
 fixture = r'''
 window.__requests = [];
 window.__loggedIn = false;
@@ -80,10 +84,18 @@ with sync_playwright() as p:
         page=context.new_page()
         errors=[]
         page.on('pageerror',lambda e:errors.append(str(e)))
-        page.set_content(html)
+        def serve_asset(route):
+            path = route.request.url.removeprefix(ASSET_ORIGIN).split('?', 1)[0]
+            if path not in ASSETS:
+                route.abort()
+                return
+            route.fulfill(body=ASSETS[path].read_bytes(), content_type='text/javascript',
+                          headers={'Access-Control-Allow-Origin': '*'})
+        page.route(ASSET_ORIGIN + '/**', serve_asset)
+        page.set_content(html.replace('<head>', '<head><base href="' + ASSET_ORIGIN + '/">'))
         page.add_style_tag(content=css)
         page.add_script_tag(content=fixture)
-        page.add_script_tag(content=markdown+'\n'+app,type='module')
+        page.add_script_tag(content=app,type='module')
         expect(page.locator('#login-screen')).to_be_visible()
         page.locator('#password').fill('fixture-only-password')
         page.get_by_role('button',name='Sign in',exact=True).click()

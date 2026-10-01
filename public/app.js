@@ -1,4 +1,6 @@
 import { markdown, escape as esc } from './markdown.js';
+import { renderDiagrams, cancelDiagrams } from './diagrams.js';
+import { installSidebarGestures } from './touch.js';
 const $ = selector => document.querySelector(selector);
 const icons = {
   chat: '<path d="M4 4h16v12H9l-5 4V4Z"/><path d="M8 8h8M8 12h5"/>',
@@ -16,7 +18,7 @@ const icons = {
 const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] ?? icons.chat}</svg>`;
 function fillIcons(root = document) { root.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
 fillIcons();
-const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, drafts: new Map(), openReasoning: new Set(), authenticated: false };
+const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, drafts: new Map(), openReasoning: new Set(), openStats: new Set(), authenticated: false };
 let events, toastTimer, searchTimer, listTimer, pendingCheck = false;
 const selectedProvider = () => state.providers.find(p => p.id === $('#provider-select').value);
 const routeId = () => location.hash.slice(1) || null;
@@ -48,7 +50,7 @@ function toast(message) {
   toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 10000);
 }
 function showLogin() {
-  state.authenticated = false; events?.close();
+  state.authenticated = false; events?.close(); cancelDiagrams();
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('#app').hidden = true; $('#login-screen').hidden = false; $('#password').focus();
 }
@@ -101,7 +103,6 @@ function pathMessages(c) {
 }
 function statisticsHtml(m) {
   if (m.role !== 'assistant') return '';
-  if (m.status === 'streaming') return '<div class="message-meta">Statistics pending until the response ends.</div>';
   const { usage = {}, timings = {}, observed = {} } = m.metadata;
   const valid = (n, integer = false) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER && (!integer || Number.isSafeInteger(n));
   const count = n => valid(n, true) ? String(n) : 'unavailable';
@@ -120,7 +121,7 @@ function statisticsHtml(m) {
   ];
   if (valid(u.completion_tokens_details?.reasoning_tokens, true)) items.push(metric('Reasoning tokens', count(u.completion_tokens_details.reasoning_tokens), 'Reasoning token count reported separately by the provider. Not estimated from reasoning text.'));
   if (valid(t.draft_n, true) || valid(t.draft_n_accepted, true)) items.push(metric('MTP accepted / drafted', `${count(t.draft_n_accepted)} / ${count(t.draft_n)}`, 'Multi-token prediction (MTP) counts reported by the model server. Accepted draft tokens / proposed draft tokens.'));
-  return `<div class="message-stats" role="group" aria-label="Generation statistics"><dl>${items.join('')}</dl><p>PP/TG: upstream. Duration/first text: chat server. First text includes reasoning. llama.cpp output counts include reasoning. Unavailable means not reported or not recorded.</p></div>`;
+  return `<details class="message-stats" data-stats="${esc(m.id)}" ${state.openStats.has(m.id) ? 'open' : ''}><summary title="Expand or collapse generation statistics"><span>PP ${esc(rate(t.prompt_per_second))}</span><span>TG ${esc(rate(t.predicted_per_second))}</span></summary><dl>${items.slice(2).join('')}</dl>${m.status === 'streaming' ? '<p>Statistics pending until the response ends.</p>' : ''}<p>PP/TG: upstream. Duration/first text: chat server. First text includes reasoning. llama.cpp output counts include reasoning. Unavailable means not reported or not recorded.</p></details>`;
 }
 function messageHtml(m, c) {
   if (!m.content && !m.reasoning && m.role === 'system' && !m.attachments.length) return '';
@@ -130,9 +131,9 @@ function messageHtml(m, c) {
   const files = m.attachments.map(a => a.kind === 'image'
     ? `<a href="/api/attachments/${encodeURIComponent(a.id)}" target="_blank" rel="noopener"><img class="attached-image" src="/api/attachments/${encodeURIComponent(a.id)}" alt="${esc(a.name)}" loading="lazy"></a>`
     : `<a class="file-link" href="/api/attachments/${encodeURIComponent(a.id)}" download="${esc(a.name)}">${esc(a.name)} <span class="muted">${Math.ceil(a.size / 1024)} KiB</span></a>`).join('');
-  const thinking = m.reasoning ? `<details class="reasoning" data-reasoning="${esc(m.id)}" ${state.openReasoning.has(m.id) ? 'open' : ''}><summary>Reasoning</summary><div class="message-body">${markdown(m.reasoning)}</div></details>` : '';
+  const thinking = m.reasoning ? `<details class="reasoning" data-reasoning="${esc(m.id)}" ${state.openReasoning.has(m.id) ? 'open' : ''}><summary>Reasoning</summary><div class="message-body">${markdown(m.reasoning, { streaming: m.status === 'streaming' })}</div></details>` : '';
   const status = m.status === 'complete' ? '' : `<span class="badge">${esc(m.status)}</span>`;
-  const body = m.role === 'user' ? esc(m.content) : markdown(m.content);
+  const body = m.role === 'user' ? esc(m.content) : markdown(m.content, { streaming: m.status === 'streaming' });
   const actions = `<button data-copy="${esc(m.id)}">Copy</button>${m.role === 'user' ? `<button data-edit="${esc(m.id)}" ${active ? 'disabled' : ''}>Edit</button>` : ''}${m.role === 'assistant' ? `<button data-regenerate="${esc(m.id)}" ${active ? 'disabled' : ''}>Regenerate</button>` : ''}`;
   const branches = siblings.length > 1 ? `<button data-branch="${esc(siblings[Math.max(0,index-1)].id)}" ${index === 0 || active ? 'disabled' : ''}>Previous</button><span class="branch-count">${index+1} / ${siblings.length}</span><button data-branch="${esc(siblings[Math.min(siblings.length-1,index+1)].id)}" ${index === siblings.length-1 || active ? 'disabled' : ''}>Next</button>` : '';
   const error = m.metadata.error ? `<div class="message-error">${esc(m.metadata.error)}</div>` : '';
@@ -142,12 +143,18 @@ function messageHtml(m, c) {
 }
 function renderThread(forceBottom = false) {
   const thread = $('#thread'), top = thread.scrollTop, bottom = thread.scrollHeight - top - thread.clientHeight < 110;
+  // Read native state before replacing DOM. Queued toggle events may not run yet.
+  for (const details of thread.querySelectorAll('details[data-reasoning], details[data-stats]')) {
+    const set = details.dataset.reasoning ? state.openReasoning : state.openStats, id = details.dataset.reasoning ?? details.dataset.stats;
+    if (details.open) set.add(id); else set.delete(id);
+  }
   const c = state.conversation, path = c ? pathMessages(c) : [];
   document.title = c ? `${c.title} | Common Chat` : 'Common Chat';
   if (!path.length) {
     thread.innerHTML = `<div id="empty-state"><div class="brand-mark">${icon('chat')}</div><h1>Your models. Your conversations.</h1><p class="muted">Chat with the model server you choose.<br>Pick up the same conversation on your next device.</p><div class="empty-actions"><button class="primary" data-open-connections>${icon('plug')}${state.providers.length ? 'Manage connections' : 'Add a connection'}</button><button data-import>${icon('upload')}Import your chats</button></div><div class="empty-detail small">Conversations and attachments stay on this chat server.<br>Model endpoints only receive the context you send.</div></div>`;
   } else thread.innerHTML = `<div class="thread-inner">${path.map(m => messageHtml(m, c)).join('')}</div>`;
   thread.scrollTop = forceBottom || bottom ? thread.scrollHeight : top;
+  renderDiagrams(thread, () => { if (forceBottom || bottom) thread.scrollTop = thread.scrollHeight; });
   updateControls();
 }
 async function loadCurrent(forceBottom = false) {
@@ -159,7 +166,7 @@ async function loadCurrent(forceBottom = false) {
 }
 async function navigate(cid, known = null) {
   if (state.busy || state.retry) { toast('Finish the current submission before switching conversations.'); return; }
-  rememberDraft();
+  rememberDraft(); cancelDiagrams();
   if (routeId() !== cid) history.pushState(null, '', cid ? `#${encodeURIComponent(cid)}` : location.pathname);
   state.conversation = known; restoreDraft(cid); $('#app').classList.remove('sidebar-open');
   if (cid && !known) {
@@ -290,6 +297,20 @@ async function copyMessage(mid) {
   const content = state.conversation?.messages.find(m => m.id === mid)?.content ?? '';
   try { await navigator.clipboard.writeText(content); toast('Message copied.'); }
   catch { toast('Clipboard access requires HTTPS or localhost. Select the message text and copy it.'); }
+}
+async function copyCode(button) {
+  const block = button.closest('.code-block'), code = block?.querySelector('pre code');
+  if (!code) return;
+  try {
+    if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable');
+    await navigator.clipboard.writeText(code.textContent ?? ''); toast('Code copied.');
+  } catch {
+    const details = block.querySelector('.diagram-source'); if (details) details.open = true;
+    const selection = window.getSelection();
+    if (selection) { const range = document.createRange(); range.selectNodeContents(code); selection.removeAllRanges(); selection.addRange(range); }
+    code.scrollIntoView({ block: 'nearest' });
+    toast('Source selected. Use your browser Copy command or press Ctrl+C. On touchscreens, long-press the source to copy.');
+  }
 }
 function openConnections() {
   $('#edit-provider').value = selectedProvider()?.id ?? '';
@@ -486,6 +507,7 @@ $('#cancel-edit').addEventListener('click', () => { state.editing = null; state.
 $('#stop').addEventListener('click', async () => { try { if (state.conversation?.activeJob) await api(`/api/jobs/${state.conversation.activeJob.id}/cancel`, 'POST'); } catch (e) { toast(e.message); } });
 $('#thread').addEventListener('click', event => {
   const b = event.target.closest('button'); if (!b) return;
+  if ('codeCopy' in b.dataset) copyCode(b);
   if ('openConnections' in b.dataset) openConnections();
   if ('import' in b.dataset) $('#import-input').click();
   if (b.dataset.copy) copyMessage(b.dataset.copy);
@@ -495,8 +517,11 @@ $('#thread').addEventListener('click', event => {
 });
 $('#thread').addEventListener('toggle', event => {
   const target = event.target;
-  if (!target.dataset.reasoning) return;
-  if (target.open) state.openReasoning.add(target.dataset.reasoning); else state.openReasoning.delete(target.dataset.reasoning);
+  if (!target.isConnected) return;
+  const id = target.dataset.reasoning ?? target.dataset.stats;
+  if (!id) return;
+  const set = target.dataset.reasoning ? state.openReasoning : state.openStats;
+  if (target.open) set.add(id); else set.delete(id);
 }, true);
 $('#import-button').addEventListener('click', () => $('#import-input').click());
 $('#import-input').addEventListener('change', () => importFile($('#import-input').files[0]));
@@ -521,6 +546,7 @@ $('#delete-conversation').addEventListener('click', async () => {
 });
 $('#sidebar-toggle').addEventListener('click', () => $('#app').classList.toggle('sidebar-open'));
 $('#sidebar-backdrop').addEventListener('click', () => $('#app').classList.remove('sidebar-open'));
+installSidebarGestures($('#app'), $('#sidebar'));
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
 window.addEventListener('hashchange', () => { if (state.authenticated) navigate(routeId()); });
 window.addEventListener('online', () => { if (state.authenticated) { connectEvents(); checkPending(); } });

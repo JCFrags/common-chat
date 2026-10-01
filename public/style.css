@@ -90,7 +90,9 @@ h3 { font-size: 15px; font-weight: 600; }
 .message-actions .branch-count { margin: 0 3px; font-size: 10px; color: var(--muted-foreground); }
 .message-meta { font-size: 11px; margin-top: 8px; color: var(--muted-foreground); }
 .message-stats { margin-top: 10px; color: var(--muted-foreground); font-size: 11px; }
-.message-stats dl { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; }
+.message-stats summary { cursor: pointer; font-variant-numeric: tabular-nums; }
+.message-stats summary span { display: inline-block; margin-right: 16px; }
+.message-stats dl { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 8px 0 0; }
 .message-stats dl > div { min-width: 90px; max-width: 100%; }
 .message-stats dt { font-weight: 600; }
 .message-stats dd { margin: 1px 0 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
@@ -113,6 +115,52 @@ pre code { padding: 0; background: none; }
 .table-scroll { max-width: 100%; overflow: auto; margin-bottom: 14px; }
 table { border-collapse: collapse; font-size: 13px; }
 th, td { border: 1px solid var(--border); text-align: left; padding: 8px 12px; }
+.align-center { text-align: center; }
+.align-right { text-align: right; }
+.task-checkbox { vertical-align: middle; margin-right: 4px !important; }
+.code-block { margin-bottom: 14px; min-width: 0; }
+.code-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 10px; background: var(--code-background); border: 1px solid var(--sidebar-border); border-radius: var(--radius) var(--radius) 0 0; color: var(--muted-foreground); font-size: 11px; }
+.code-toolbar button { padding: 3px 7px; font-size: 11px; }
+.code-block > pre { margin-top: 0; border-radius: 0 0 var(--radius) var(--radius); }
+.render-note { color: var(--muted-foreground); font-size: 12px; margin: 6px 0 !important; }
+.render-fallback { overflow-wrap: anywhere; }
+.math-block { max-width: 100%; overflow-x: auto; margin: 14px 0; padding: 3px 0; }
+.katex math { font-size: 1.1em; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in { color: #7a2caf; }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attr { color: #196d39; }
+.hljs-number, .hljs-symbol, .hljs-variable, .hljs-template-variable { color: #a14615; }
+.hljs-title, .hljs-section, .hljs-type, .hljs-selector-class { color: #135eac; }
+.dark :is(.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-built_in) { color: #d5a4ff; }
+.dark :is(.hljs-string, .hljs-regexp, .hljs-addition, .hljs-attr) { color: #9ed6a0; }
+.dark :is(.hljs-number, .hljs-symbol, .hljs-variable, .hljs-template-variable) { color: #efbd8e; }
+.dark :is(.hljs-title, .hljs-section, .hljs-type, .hljs-selector-class) { color: #95c8ff; }
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--muted-foreground); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: bold; }
+.hljs-deletion { color: var(--destructive); }
+.diagram-output { overflow: auto; max-width: 100%; }
+.diagram-source { margin-top: 8px; }
+.diagram-source summary { cursor: pointer; color: var(--muted-foreground); font-size: 12px; }
+.diagram-stage { position: fixed; left: -10000px; top: 0; width: 800px; visibility: hidden; pointer-events: none; }
+.diagram-output .rendered-diagram { display: block; width: 100%; min-width: 320px; height: auto; max-height: none; }
+/* Fixed trusted SVG presentation. Mermaid input cannot supply CSS. These rules
+   also give the offscreen stage the same text metrics under style-src 'self'. */
+.diagram-output svg, .diagram-stage svg { font-family: sans-serif; font-size: 16px; color: var(--foreground); }
+.diagram-output svg text, .diagram-stage svg text { fill: var(--foreground); stroke: none; }
+.diagram-output svg path, .diagram-output svg line, .diagram-output svg polyline, .diagram-stage svg path, .diagram-stage svg line { stroke: var(--foreground); stroke-width: 1.5px; fill: none; }
+.diagram-output svg rect, .diagram-output svg circle, .diagram-output svg ellipse, .diagram-output svg polygon, .diagram-stage svg rect, .diagram-stage svg circle, .diagram-stage svg polygon { fill: var(--secondary); stroke: var(--foreground); stroke-width: 1px; }
+.diagram-output svg marker path, .diagram-stage svg marker path { fill: var(--foreground); stroke: var(--foreground); }
+.diagram-output svg .cluster rect { fill: var(--background); stroke: var(--border); }
+.diagram-output svg .actor-line, .diagram-output svg .edge-pattern-dashed, .diagram-output svg .relation { stroke-dasharray: 4 3; }
+.diagram-output svg .labelBkg, .diagram-output svg .edgeLabel rect { fill: var(--background); stroke: none; }
+.diagram-output svg .pieCircle { fill: var(--secondary); }
+.diagram-output svg .diagram-palette-0 { fill: #79afd1; }
+.diagram-output svg .diagram-palette-1 { fill: #dea36c; }
+.diagram-output svg .diagram-palette-2 { fill: #88c398; }
+.diagram-output svg .diagram-palette-3 { fill: #b59bd4; }
+.diagram-output svg .diagram-palette-4 { fill: #d7899c; }
+.diagram-output svg .diagram-palette-5 { fill: #c8bc6f; }
+.diagram-output svg .pieOuterCircle { fill: none; }
 .file-links { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .file-link { text-decoration: none; border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 12px; max-width: 100%; overflow-wrap: anywhere; }
 .attached-image { max-height: 220px; max-width: 100%; border-radius: 10px; display: block; margin: 8px 0; }

@@ -192,6 +192,55 @@ Streaming requests use the standard `stream_options: { include_usage: true }`. l
 
 Metadata uses the existing JSON column and native export/import format. Old messages need no migration and receive no invented values. Cancelled, interrupted, and failed responses retain observed timings when the server can finish the job, but upstream statistics may be absent. Hard crashes can leave no timing observations. Reloading the conversation reads the saved values rather than measuring browser rendering time.
 
+## Rich rendering and mobile input
+
+Assistant answers and reasoning use the same renderer. User messages stay plain text. Rendering does not change saved message source, provider data, settings, attachments, or import/export content.
+
+Supported Markdown includes headings, nested ordered/unordered lists, read-only `[ ]` and `[x]` tasks, tables with column alignment, HTTP/HTTPS links without URL credentials, quotes, emphasis, strikeout, and fenced code. Raw HTML is escaped. Markdown image syntax remains text and makes no image request. Footnotes and executable HTML/JavaScript previews are not enabled. Fences have language labels and source-copy controls. Unsupported languages stay readable without automatic language detection.
+
+The bundled highlighter supports JavaScript, TypeScript, Python, JSON, Bash, CSS, HTML/XML, SQL, C, C++, Java, Rust, Go, YAML, Markdown, and their registered aliases. A code block must have a closing fence and fit the highlighting limit. Streaming responses show plain code until the response ends.
+
+KaTeX supports `$...$` and `\\(...\\)` inline math. Put `$$...$$` or `\\[...\\]` block math on separate lines. The opening and closing delimiters can share one block line. Incomplete delimiters remain visible text. Math uses MathML-only output, not inline HTML styles or downloaded fonts. Use a current browser with native MathML, such as Firefox, Chromium 109 or later, or current Safari. Mermaid 12 targets modern browsers, including Safari 17.4 or later. Browser acceptance remains a separate deployment check.
+
+Mermaid supports `graph`/`flowchart`, `sequenceDiagram`, `classDiagram`, `stateDiagram`/`stateDiagram-v2`, `erDiagram`, and `pie` fences. Other types remain visible source. The Tiny build excludes mind maps, architecture, ELK layouts, and Mermaid math. Input frontmatter, configuration directives, styling directives, callbacks, click links, HTML labels, and image/icon shapes are rejected. This conservative filter can also reject labels that contain reserved words or URL text. Diagrams use fixed application styles, not input styling. Source is available below each rendered diagram.
+
+| Work | Limit per answer or reasoning body |
+| --- | --- |
+| Rich parsing | 128 Ki characters, with nesting depth 32. Larger bodies display escaped source. |
+| Code highlighting | 16 Ki characters per fenced block. Larger blocks display plain source. |
+| Math | 4,096 characters per expression, 100 expressions, and 32 Ki characters in all expressions. |
+| Math expansion | 500 macro expansions and maximum user-specified size 10 em. Each expression gets fresh macros. `trust` is false. |
+| Mermaid input | 8,192 characters, 100 newline/semicolon segments, and 600 word tokens per diagram. |
+| Mermaid graph | Maximum 100 edges. |
+| Mermaid count | Four diagrams per body and eight diagrams per visible thread update. |
+| Mermaid output | 512 Ki characters and 2,500 SVG descendant elements per diagram. |
+
+Diagrams render one at a time, only after generation ends and a closing fence is present. Rerenders, navigation, and sign-out invalidate queued work. Stale asynchronous results cannot replace the current thread. Input size limits bound work but are not a hard execution-time deadline for Mermaid's main-thread layout. Invalid or unsupported diagrams show an error and their source. Diagram callbacks are never bound.
+
+DOMPurify sanitizes generated browser HTML/MathML and diagram SVG. SVG allows only static drawing/text elements and bounded output. It removes scripts, links, images, `foreignObject`, animation, styles, and network references. Marker and accessibility references are rewritten to unique local IDs. The existing CSP remains unchanged, including `script-src 'self'` and `style-src 'self'`. Fixed external CSS replaces Mermaid-generated inline styles. Mermaid can still attempt to insert internal styles into its temporary offscreen render stage. The CSP blocks those styles. No remote renderer assets, CDN, fonts, or model content requests are needed.
+
+On an HTTP site, browser clipboard access can be absent. The code-copy control then reveals and selects the source and shows manual copy instructions. Use the browser Copy command, Ctrl+C, or a touchscreen long-press. Whole-message Copy still copies the original message source when clipboard access is available.
+
+Mobile touch gestures apply only up to the existing 760 CSS-pixel breakpoint:
+
+1. Swipe right from the left 24-pixel edge of a noninteractive application area to open the sidebar.
+2. Swipe left from a noninteractive area inside the open sidebar to close it.
+
+Each gesture needs 64 pixels of horizontal movement within 800 ms, at most 40 pixels of vertical movement, and at least 1.7 times as much horizontal as vertical movement. Multiple touches, existing text selection, vertical movement, interactive controls, and rich message content are excluded. Mouse drags do not trigger gestures. The existing menu button and backdrop tap still work. The automated check covers direction/distance classification, not physical-phone gesture behavior.
+
+### Rebuild browser assets
+
+Committed assets under `public/vendor` let the server run without npm install. Only contributors who change the renderer dependencies need this procedure:
+
+```sh
+npm ci --ignore-scripts
+npm run build:renderer
+npm run check
+npm test
+```
+
+Exact build-only versions and package integrity are in `package.json` and `package-lock.json`. The build uses esbuild to bundle the parser, math renderer, selected highlighter languages, and DOMPurify. It copies the self-contained Mermaid Tiny bundle and changes only its final export to an ES module. No install hooks are needed. The build records asset sizes and SHA-256 hashes in `public/vendor/manifest.json`. Licenses and provenance are in `licenses/rendering/README.md`. Do not commit `node_modules`.
+
 ## Recovery and troubleshooting
 
 A normal stop flushes active responses and marks them interrupted. A hard crash can leave a stale process lock. On the same host, the next startup removes a lock whose process no longer exists.

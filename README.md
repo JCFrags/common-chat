@@ -21,7 +21,7 @@ STE-style, not verified for ASD-STE100 compliance.
 
 ## Start locally
 
-The tested runtime is Node.js 22.16.0 on Linux. The package requires Node.js 22.16.0 or later. It has no npm dependencies and requires no build step. The runtime uses the built-in `node:sqlite` module.
+The tested runtime is Node.js 22.16.0 on Linux. The package requires Node.js 22.16.0 or later. The server has no npm runtime dependencies and uses the built-in `node:sqlite` module. Pinned browser assets ship in `public/vendor`. Starting the server does not require npm install or a build. Rebuilding these assets requires the build-only dependencies. See `docs/OPERATIONS.md`.
 
 1. Extract the archive.
 2. Open a terminal in the extracted `common-chat` directory.
@@ -67,7 +67,7 @@ Capabilities are configured per connection. Separate connections can use the sam
 
 ## Response statistics
 
-Each assistant message shows generation statistics after the response ends:
+Each assistant message has a collapsed, keyboard-accessible statistics section. Its summary shows only PP and TG rates. Select the summary to show token counts, latency, MTP counts when reported, and the explanation. Open sections remain open during thread updates. Statistics are unavailable until reported, normally after the response ends:
 
 - **PP** is prompt-processing speed in tokens/s. **TG** is token-generation speed in tokens/s. These are the model server's reported rates, not estimates from chat duration.
 - Input and output token counts use upstream usage. If usage is absent, llama.cpp timing counts are used. "Input tokens (timed)" can exclude cached input. llama.cpp output counts include reasoning tokens and the answer. Other providers define their own counts. A separate reasoning count appears only if the provider reports it.
@@ -152,7 +152,11 @@ Sent messages and attached files are durable. Unsent drafts remain in browser me
 
 A browser disconnect does not cancel generation. A server crash does interrupt generation. After restart, committed partial text remains and the response is marked interrupted. The latest uncommitted tokens can be lost. Generation does not automatically resume after a server crash.
 
-The UI has a restricted Markdown renderer. It supports code fences, headings, basic lists, links, quotes, and tables. It does not provide full upstream rendering, syntax highlighting, KaTeX, Mermaid, or executable previews.
+The assistant answer and reasoning support headings, nested lists, read-only task checkboxes, tables, HTTP/HTTPS links, quotes, emphasis, strikeout, and code fences. Known code languages have syntax highlighting and source-copy controls. KaTeX renders inline `$...$` and `\\(...\\)` math and block `$$...$$` and `\\[...\\]` math as native MathML. Mermaid fences support flowcharts, sequence diagrams, class diagrams, state diagrams, entity-relationship diagrams, and pie charts. Source remains available for every diagram. User messages remain plain text.
+
+Raw HTML is escaped. Markdown images, executable previews, diagram links/callbacks, input configuration, and arbitrary styles are not enabled. Footnotes, Mermaid mind maps, architecture diagrams, ELK layouts, and Mermaid-internal math are not supported. The renderer also excludes other diagram types. Invalid, incomplete, unsupported, or oversized content keeps visible source. See `docs/OPERATIONS.md` for limits and browser requirements.
+
+On mobile layouts up to 760 CSS pixels wide, a right swipe from the left 24-pixel edge opens the sidebar. A left swipe from a noninteractive area inside the open sidebar closes it. Swipes need at least 64 pixels of horizontal movement within 800 ms and must be mostly horizontal. Buttons, links, text entry, selected text, and rich message content retain their normal touch actions. Vertical scrolling and horizontal code/table/diagram scrolling do not invoke the gesture. The menu button and backdrop tap remain available. Physical-phone behavior requires device verification.
 
 This version does not execute tools or MCP calls. It does not parse PDFs, transcribe audio, process video, manage models, or provide offline synchronization. It implements chat completions, not a universal provider protocol or the Responses API.
 

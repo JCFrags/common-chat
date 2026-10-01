@@ -1,0 +1,22 @@
+// Build-only entry. The generated browser module is committed under public/vendor.
+export { default as MarkdownIt } from 'markdown-it';
+export { default as katex } from 'katex';
+export { default as DOMPurify } from 'dompurify';
+import hljs from 'highlight.js/lib/core';
+import javascript from 'highlight.js/lib/languages/javascript';
+import typescript from 'highlight.js/lib/languages/typescript';
+import python from 'highlight.js/lib/languages/python';
+import json from 'highlight.js/lib/languages/json';
+import bash from 'highlight.js/lib/languages/bash';
+import css from 'highlight.js/lib/languages/css';
+import xml from 'highlight.js/lib/languages/xml';
+import sql from 'highlight.js/lib/languages/sql';
+import c from 'highlight.js/lib/languages/c';
+import cpp from 'highlight.js/lib/languages/cpp';
+import java from 'highlight.js/lib/languages/java';
+import rust from 'highlight.js/lib/languages/rust';
+import go from 'highlight.js/lib/languages/go';
+import yaml from 'highlight.js/lib/languages/yaml';
+import markdown from 'highlight.js/lib/languages/markdown';
+for (const [name, grammar] of Object.entries({ javascript, typescript, python, json, bash, css, xml, sql, c, cpp, java, rust, go, yaml, markdown })) hljs.registerLanguage(name, grammar);
+export { hljs };

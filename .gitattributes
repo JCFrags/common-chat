@@ -1,0 +1,3 @@
+# Preserve upstream license bytes and whitespace inside bundled template strings.
+public/vendor/*.js -whitespace
+licenses/rendering/*-LICENSE* -whitespace
