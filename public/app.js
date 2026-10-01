@@ -104,25 +104,32 @@ function pathMessages(c) {
 }
 function statisticsHtml(m) {
   if (m.role !== 'assistant') return '';
-  const { usage = {}, timings = {}, observed = {} } = m.metadata;
+  const { usage = {}, timings = {}, observed = {}, promptProgress = {} } = m.metadata;
   const valid = (n, integer = false) => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= Number.MAX_SAFE_INTEGER && (!integer || Number.isSafeInteger(n));
   const count = n => valid(n, true) ? String(n) : 'unavailable';
   const rate = n => valid(n) ? `${n.toFixed(2)} tokens/s` : 'unavailable';
   const seconds = n => valid(n) ? `${(n / 1000).toFixed(2)} s` : 'unavailable';
   const metric = (label, value, help) => `<div title="${esc(help)}"><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`;
-  const u = usage ?? {}, t = timings ?? {}, o = observed ?? {};
+  const u = usage ?? {}, t = timings ?? {}, o = observed ?? {}, p = promptProgress ?? {};
+  const promptRate = m.status === 'streaming' && t.prompt_n === 0 && t.prompt_per_second === 0 ? 'pending' : rate(t.prompt_per_second);
+  const generationRate = m.status === 'streaming' && t.predicted_n === 0 && t.predicted_per_second === 0 ? 'pending' : rate(t.predicted_per_second);
+  const hasProgress = valid(p.total, true) && valid(p.processed, true) && p.processed <= p.total;
+  const progress = hasProgress ? `${p.processed} / ${p.total} tokens${p.total > 0 ? ` (${(100 * p.processed / p.total).toFixed(1)}%)` : ''}` : 'unavailable';
   const inputFromUsage = valid(u.prompt_tokens, true), outputFromUsage = valid(u.completion_tokens, true);
   const items = [
-    metric('PP', rate(t.prompt_per_second), 'Prompt-processing speed reported by the model server. Not estimated from chat duration.'),
-    metric('TG', rate(t.predicted_per_second), 'Token-generation speed reported by the model server. Includes reasoning when the provider counts it.'),
+    metric('PP', promptRate, 'Prompt-processing speed reported by the model server. Not estimated from chat duration.'),
+    metric('TG', generationRate, 'Token-generation speed reported by the model server. Includes reasoning when the provider counts it.'),
     metric(inputFromUsage || !valid(t.prompt_n, true) ? 'Input tokens' : 'Input tokens (timed)', count(inputFromUsage ? u.prompt_tokens : t.prompt_n), 'Upstream prompt_tokens, or prompt_n if usage is absent. The timed count can exclude cached input.'),
     metric('Output tokens', count(outputFromUsage ? u.completion_tokens : t.predicted_n), 'Upstream completion_tokens, or predicted_n if usage is absent. For llama.cpp this includes reasoning, not just the visible answer. Other providers define their own token counts.'),
-    metric('Duration', seconds(o.durationMs), 'Chat server observation from the model request start to response end or failure. Includes queue, transport, and response processing time.'),
+    metric(m.status === 'streaming' ? 'Elapsed (server)' : 'Duration (server)', seconds(o.durationMs), 'Chat server observation from the model request start to response end or failure. Includes queue, transport, and response processing time.'),
     metric('First text', o.responseMode === 'non-streaming' ? 'unavailable (non-streaming)' : seconds(o.firstTextMs), 'Chat server observation from request start to the first nonempty answer or reasoning delta. A buffered JSON response cannot expose this latency.')
   ];
+  if (hasProgress) items.push(metric('Prompt progress', progress, 'Prompt processing reported by the model server. Processed includes cached tokens. This is the last recorded sample, not an estimated token count.'),
+    metric('Prompt cached tokens', count(p.cache), 'Cached prompt tokens reported in the upstream progress sample.'),
+    metric('Prompt elapsed (upstream)', seconds(p.time_ms), 'Elapsed prompt-processing time reported by the model server in the last progress sample.'));
   if (valid(u.completion_tokens_details?.reasoning_tokens, true)) items.push(metric('Reasoning tokens', count(u.completion_tokens_details.reasoning_tokens), 'Reasoning token count reported separately by the provider. Not estimated from reasoning text.'));
   if (valid(t.draft_n, true) || valid(t.draft_n_accepted, true)) items.push(metric('MTP accepted / drafted', `${count(t.draft_n_accepted)} / ${count(t.draft_n)}`, 'Multi-token prediction (MTP) counts reported by the model server. Accepted draft tokens / proposed draft tokens.'));
-  return `<details class="message-stats" data-stats="${esc(m.id)}" ${state.openStats.has(m.id) ? 'open' : ''}><summary title="Expand or collapse generation statistics"><span>PP ${esc(rate(t.prompt_per_second))}</span><span>TG ${esc(rate(t.predicted_per_second))}</span></summary><dl>${items.slice(2).join('')}</dl>${m.status === 'streaming' ? '<p>Statistics pending until the response ends.</p>' : ''}<p>PP/TG: upstream. Duration/first text: chat server. First text includes reasoning. llama.cpp output counts include reasoning. Unavailable means not reported or not recorded.</p></details>`;
+  return `<details class="message-stats" data-stats="${esc(m.id)}" ${state.openStats.has(m.id) ? 'open' : ''}><summary title="Expand or collapse generation statistics"><span>PP ${esc(promptRate)}</span><span>TG ${esc(generationRate)}</span>${m.status === 'streaming' && hasProgress ? `<span>Prompt ${esc(progress)}</span>` : ''}</summary><dl>${items.slice(2).join('')}</dl>${m.status === 'streaming' ? '<p>Live upstream statistics. Values can change until the response ends. Unavailable fields need upstream support.</p>' : ''}<p>PP/TG: upstream. Duration/first text: chat server. First text includes reasoning. llama.cpp output counts include reasoning. Unavailable means not reported or not recorded.</p></details>`;
 }
 function messageHtml(m, c) {
   if (!m.content && !m.reasoning && m.role === 'system' && !m.attachments.length) return '';
@@ -354,14 +361,14 @@ function fillConnectionForm() {
   $('#connection-key').value = ''; $('#connection-clear-key').checked = false;
   $('#connection-key').placeholder = p?.hasKey ? 'A key is saved. Leave blank to keep it.' : 'Optional API key';
   $('#connection-models').value = p?.models.join('\n') ?? '';
-  for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens']) $('#cap-'+key).checked = p ? p.capabilities[key] : key !== 'vision';
+  for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens','llamaCppTimings']) $('#cap-'+key).checked = p ? p.capabilities[key] === true : !['vision','llamaCppTimings'].includes(key);
   $('#token-parameter').value = p?.capabilities.tokenParameter ?? 'max_tokens';
   $('#connection-error').textContent = ''; $('#delete-provider').hidden = !p;
 }
 async function saveProvider(event) {
   event.preventDefault(); $('#save-provider').disabled = true;
   const pid = $('#edit-provider').value, capabilities = {};
-  for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens']) capabilities[key] = $('#cap-'+key).checked;
+  for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens','llamaCppTimings']) capabilities[key] = $('#cap-'+key).checked;
   capabilities.tokenParameter = $('#token-parameter').value;
   try {
     const p = await api(pid ? `/api/providers/${pid}` : '/api/providers', pid ? 'PUT' : 'POST', {

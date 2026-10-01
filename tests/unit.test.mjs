@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sseRecords, deltaText, usageStats, timingStats } from '../server/provider.mjs';
+import { sseRecords, deltaText, usageStats, timingStats, promptProgressStats } from '../server/provider.mjs';
 import { settings, providerConfig, attachmentData, decodeBase64 } from '../server/validation.mjs';
 import { markdown } from '../public/markdown.js';
 import { parseText, crc32, zipEntries } from '../server/transfer.mjs';
@@ -28,8 +28,15 @@ test('Response statistics retain recognized bounded numbers without coercion or 
   }
   assert.equal(usageStats({ completion_tokens:1.5 }), null);
   assert.equal(timingStats({ draft_n:1.5 }), null);
+  assert.deepEqual(promptProgressStats({ total:9, cache:2, processed:5, time_ms:20.5, unknown:'omit' }),
+    { total:9, cache:2, processed:5, time_ms:20.5 });
+  for (const invalid of [
+    { total:9, cache:6, processed:5, time_ms:20 }, { total:9, cache:2, processed:10, time_ms:20 },
+    { total:9, cache:2, processed:5 }, { total:9, cache:2, processed:5.5, time_ms:20 },
+    { total:9, cache:2, processed:5, time_ms:Infinity }, { total:'9', cache:2, processed:5, time_ms:20 }
+  ]) assert.equal(promptProgressStats(invalid), null);
   for (const value of [null, undefined, [], 'bad', {}]) {
-    assert.equal(usageStats(value), null); assert.equal(timingStats(value), null);
+    assert.equal(usageStats(value), null); assert.equal(timingStats(value), null); assert.equal(promptProgressStats(value), null);
   }
 });
 test('Settings preserve explicit zero and reject unsupported names and invalid numbers', () => {
@@ -40,6 +47,9 @@ test('Provider validation rejects credential URLs and non-HTTP schemes', () => {
   for (const baseUrl of ['file:///etc/passwd','http://user:key@host/v1','https://host/v1?key=x','https://host/#fragment']) assert.throws(()=>providerConfig({name:'Test',baseUrl}));
   const p=providerConfig({name:'Test',baseUrl:'http://127.0.0.1:8000/v1/',models:['a','a']});
   assert.equal(p.baseUrl,'http://127.0.0.1:8000/v1'); assert.deepEqual(p.models,['a']); assert.equal(p.capabilities.vision,false);
+  assert.equal(p.capabilities.llamaCppTimings,false);
+  assert.equal(providerConfig({name:'Test',baseUrl:'http://model.example/v1',capabilities:{llamaCppTimings:true}}).capabilities.llamaCppTimings,true);
+  assert.throws(()=>providerConfig({name:'Test',baseUrl:'http://model.example/v1',capabilities:{llamaCppTimings:'true'}}));
 });
 test('Attachments reject HTML-as-image, invalid UTF-8, NULs, bad base64, and unsupported binary files', () => {
   for (const input of [

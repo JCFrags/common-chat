@@ -22,14 +22,33 @@ export async function mockModel() {
     const emit = json => { if (!res.destroyed) res.write(`data: ${JSON.stringify(json)}\r\n\r\n`); };
     if (input.model === 'malformed') { res.end('data: {invalid\n\n'); return; }
     if (input.model === 'tools') { emit({ choices:[{ delta:{ tool_calls:[{ id:'call1', function:{ name:'x' } }] } }] }); res.end(); return; }
+    if (input.model === 'stats' && input.return_progress) {
+      // Match llama.cpp's prompt progress delta, before any generated text.
+      emit({ choices:[{ delta:{ role:'assistant', content:null } }],
+        prompt_progress:{ total:9, cache:2, processed:5, time_ms:10 } });
+      await delay(180);
+      emit({ choices:[], prompt_progress:{ total:9, cache:2, processed:9, time_ms:20 } });
+      await delay(140);
+    }
     emit({ choices:[{ delta:{ reasoning_content:'Consider the request. ' } }] });
-    if (input.model === 'stats') await delay(80);
+    if (input.model === 'stats') {
+      if (input.timings_per_token) {
+        // A metadata-only update must flush even when no text delta follows.
+        emit({ choices:[], usage:{ prompt_tokens:9, completion_tokens:1 },
+          timings:{ prompt_n:7, prompt_ms:20, prompt_per_second:350,
+            predicted_n:1, predicted_ms:15, predicted_per_second:66.6667 } });
+      }
+      await delay(240);
+    }
     const words = input.model === 'slow'
       ? ['This ', 'response ', 'continues ', 'after ', 'a ', 'browser ', 'disconnects. ', ...Array(25).fill('More ')]
       : ['Hello ', 'from ', 'the ', 'test ', 'model. ', '🌍'];
-    for (const word of words) {
+    for (const [index, word] of words.entries()) {
       if (res.destroyed) return;
-      emit({ choices:[{ delta:{ content:word } }] });
+      emit({ choices:[{ delta:{ content:word } }],
+        ...(input.model === 'stats' && input.timings_per_token ? {
+          timings:{ predicted_n:index+2, predicted_ms:(index+2)*15, predicted_per_second:66.6667 }
+        } : {}) });
       await delay(input.model === 'slow' ? 60 : 25);
     }
     if (input.model !== 'truncated') {

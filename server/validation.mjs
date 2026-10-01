@@ -51,7 +51,7 @@ export function providerConfig(value) {
   models.forEach(m => text(m, 'model', 300));
   const c = object(value.capabilities ?? {}, 'capabilities');
   const capabilities = {};
-  for (const k of ['streaming', 'vision', 'systemPrompt', 'temperature', 'topP', 'maxTokens']) {
+  for (const k of ['streaming', 'vision', 'systemPrompt', 'temperature', 'topP', 'maxTokens', 'llamaCppTimings']) {
     if (c[k] !== undefined && typeof c[k] !== 'boolean') fail(400, `Invalid capability: ${k}.`);
     capabilities[k] = c[k] ?? (k === 'streaming' || k === 'systemPrompt');
   }

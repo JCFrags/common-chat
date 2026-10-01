@@ -1,5 +1,5 @@
 import { id, now, fail, hash, object, text, settings as validateSettings } from './validation.mjs';
-import { sseRecords, headers, errorText, responseError, limitedText, deltaText, usageStats, timingStats } from './provider.mjs';
+import { sseRecords, headers, errorText, responseError, limitedText, deltaText, usageStats, timingStats, promptProgressStats } from './provider.mjs';
 
 export class Generations {
   constructor(store, emit, options = {}) {
@@ -90,7 +90,14 @@ export class Generations {
       else messages.unshift({ role: 'system', content: guide });
     }
     const payload = { model, messages, stream: p.capabilities.streaming };
-    if (payload.stream) payload.stream_options = { include_usage: true };
+    if (payload.stream) {
+      payload.stream_options = { include_usage: true };
+      // These extensions are llama.cpp-specific. Never send them to an arbitrary provider.
+      if (p.capabilities.llamaCppTimings) {
+        payload.timings_per_token = true;
+        payload.return_progress = true;
+      }
+    }
     if (settings.temperature !== undefined) payload.temperature = settings.temperature;
     if (settings.topP !== undefined) payload.top_p = settings.topP;
     if (settings.maxTokens !== undefined) payload[p.capabilities.tokenParameter] = settings.maxTokens;
@@ -119,28 +126,43 @@ export class Generations {
   }
   async run(jobId, state, provider, payload) {
     const { cid, assistantId, controller } = state;
-    let content = '', reasoning = '', finishReason = null, usage = null, timings = null, status = 'complete', failure = null;
+    let content = '', reasoning = '', finishReason = null, usage = null, timings = null, promptProgress = null, status = 'complete', failure = null;
     let dirty = false, lastFlush = 0, completed = false, firstTextMs = null, responseMode = null;
     // These observations include upstream queue and transport time, unlike model timings.
     const started = performance.now();
+    const metadata = () => ({ finishReason, usage, timings, promptProgress,
+      observed: { durationMs: performance.now() - started, firstTextMs, responseMode }, error: failure });
     const flush = (force = false) => {
       if (!force && (!dirty || now() - lastFlush < 100)) return;
       this.store.transaction(() => {
-        this.store.run('UPDATE messages SET content=?,reasoning=?,updated_at=? WHERE id=?', content, reasoning, now(), assistantId);
+        this.store.run('UPDATE messages SET content=?,reasoning=?,metadata=?,updated_at=? WHERE id=?', content, reasoning, JSON.stringify(metadata()), now(), assistantId);
         this.store.touch(cid);
       });
       lastFlush = now(); dirty = false;
       const row = this.store.get('SELECT * FROM messages WHERE id=?', assistantId);
       this.emit({ type: 'delta', conversationId: cid, version: this.store.conversation(cid).version, message: this.store.message(row) });
     };
-    const timer = setInterval(() => { if (dirty) flush(); }, 100);
+    const timer = setInterval(() => {
+      // Keep observed elapsed time live during quiet prompt processing or queueing.
+      // Data updates flush at most ten times/s. Quiet streams flush at most once/s.
+      if (now() - lastFlush >= 1000) dirty = true;
+      if (dirty) flush();
+    }, 100);
     const consume = json => {
       if (json.error) throw new Error('The model server reported an error. Check its logs.');
-      const nextUsage = usageStats(json.usage), nextTimings = timingStats(json.timings);
-      if (nextUsage) usage = { ...usage, ...nextUsage };
+      const nextUsage = usageStats(json.usage), nextTimings = timingStats(json.timings), nextProgress = promptProgressStats(json.prompt_progress);
+      if (nextUsage) {
+        const merged = { ...usage, ...nextUsage };
+        for (const key of ['prompt_tokens_details', 'completion_tokens_details']) {
+          if (nextUsage[key]) merged[key] = { ...usage?.[key], ...nextUsage[key] };
+        }
+        usage = merged;
+      }
       if (nextTimings) timings = { ...timings, ...nextTimings };
+      if (nextProgress) promptProgress = nextProgress;
+      if (nextUsage || nextTimings || nextProgress) dirty = true;
       const choice = json.choices?.[0];
-      if (!choice) return;
+      if (!choice) { flush(); return; }
       const delta = choice.delta ?? choice.message ?? {};
       if (delta.tool_calls?.length || delta.function_call) throw new Error('The model returned tool calls. This version does not execute tools.');
       const textDelta = deltaText(delta.content), reasoningDelta = deltaText(delta.reasoning_content ?? delta.reasoning);
@@ -176,12 +198,12 @@ export class Generations {
       else if (state.reason === 'shutdown') { status = 'interrupted'; failure = 'The chat server stopped. The partial response is saved.'; }
       else { status = 'error'; failure = errorText(error, provider.apiKey); }
     } finally {
-      const observed = { durationMs: performance.now() - started, firstTextMs, responseMode };
       clearInterval(timer);
+      const finalMetadata = metadata();
       // Every successful generation and every failure ends in a durable terminal state.
       this.store.transaction(() => {
         this.store.run('UPDATE messages SET content=?,reasoning=?,status=?,metadata=?,updated_at=? WHERE id=?',
-          content, reasoning, status, JSON.stringify({ finishReason, usage, timings, observed, error: failure }), now(), assistantId);
+          content, reasoning, status, JSON.stringify(finalMetadata), now(), assistantId);
         this.store.run('UPDATE jobs SET status=?,error=?,updated_at=? WHERE id=?', status, failure, now(), jobId);
         this.store.touch(cid);
       });

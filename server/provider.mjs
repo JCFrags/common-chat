@@ -95,6 +95,12 @@ export function timingStats(value) {
   };
   return Object.keys(result).length ? result : null;
 }
+export function promptProgressStats(value) {
+  const result = { ...numericStats(value, ['total', 'cache', 'processed'], true), ...numericStats(value, ['time_ms']) };
+  // A progress sample describes one prompt. Reject incomplete or contradictory samples.
+  if (Object.keys(result).length !== 4 || result.cache > result.processed || result.processed > result.total) return null;
+  return result;
+}
 export function deltaText(value) {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(x => typeof x?.text === 'string' ? x.text : '').join('');

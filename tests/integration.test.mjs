@@ -9,6 +9,7 @@ import { request as httpRequest } from 'node:http';
 import { createApp } from '../server/app.mjs';
 import { mockModel } from './mock-model.mjs';
 import { makeZip } from './zip-fixture.mjs';
+import { sseRecords } from '../server/provider.mjs';
 const password='a-strong-test-password-42';
 const caps={streaming:true,vision:true,systemPrompt:true,temperature:true,topP:true,maxTokens:true,tokenParameter:'max_tokens'};
 
@@ -86,17 +87,51 @@ test('Streaming saves content, reasoning, model provenance, usage, and exact gen
   assert.equal(answer.providerName,'Mock server');assert.equal(answer.model,'demo-model');assert.equal(answer.settings.temperature,0);
   assert.equal(answer.metadata.usage.completion_tokens,6);
   assert.equal(f.model.requests[0].temperature,0);assert.equal(f.model.requests[0].max_tokens,99);
+  assert.equal(f.model.requests[0].timings_per_token,undefined);assert.equal(f.model.requests[0].return_progress,undefined);
   assert.equal(f.model.requests[0].messages[0].role,'system');
   assert(f.model.requests[0].messages[0].content.startsWith('Be clear.\n\nCommon Chat rendering:'));
   assert(f.model.requests[0].messages[0].content.includes('html preview'));
   assert.equal(f.model.authHeaders[0],'Bearer provider-secret-123');
 });
-test('Final usage-only stream statistics persist through regeneration and native export/import',async t=>{
-  const f=await fixture(t),c=await f.conversation(),r=await f.generate(c,{model:'stats'});
+test('Live and final stream statistics persist through regeneration and native export/import',async t=>{
+  const f=await fixture(t),c=await f.conversation();
+  const configured=await f.api(`/api/providers/${f.providerId}`,'PUT',{
+    name:'Mock server',baseUrl:f.model.url,capabilities:{...caps,llamaCppTimings:true}
+  });
+  assert.equal(configured.status,200);assert.equal(configured.body.capabilities.llamaCppTimings,true);
+  const controller=new AbortController(),events=[];
+  t.after(()=>controller.abort());
+  const stream=await fetch(f.url+'/api/events',{headers:{Cookie:f.cookie},signal:controller.signal});
+  const collected=(async()=>{
+    try { for await (const record of sseRecords(stream.body)) events.push(JSON.parse(record)); }
+    catch (error) { if (!controller.signal.aborted) throw error; }
+  })();
+  const r=await f.generate(c,{model:'stats'});
+  const live=async predicate=>{
+    for(let i=0;i<50;i++) {
+      const answer=(await f.api(`/api/conversations/${c.id}`)).body.messages.find(m=>m.id===r.body.messageId);
+      if (answer && predicate(answer)) { assert.equal(answer.status,'streaming');return answer; }
+      await delay(10);
+    }
+    throw new Error('Live statistics were not saved before completion');
+  };
+  const progress=await live(m=>m.metadata.promptProgress?.processed===5);
+  assert.equal(progress.content,'');assert.equal(progress.reasoning,'');assert.equal(progress.metadata.observed.firstTextMs,null);
+  const interim=await live(m=>m.metadata.timings?.predicted_n===1);
+  assert.equal(interim.content,'');assert.equal(interim.metadata.usage.completion_tokens,1);
+  assert.equal(interim.metadata.promptProgress.processed,9);assert(interim.metadata.observed.firstTextMs>=0);
   assert.equal((await f.waitJob(r.body.jobId)).status,'complete');
+  await delay(20);controller.abort();await collected;
+  const deltas=events.filter(e=>e.type==='delta' && e.message.id===r.body.messageId);
+  assert(deltas.some(e=>e.message.metadata.promptProgress?.processed===9 && !e.message.content && !e.message.reasoning));
+  assert(deltas.some(e=>e.message.metadata.timings?.predicted_n===1 && !e.message.content));
+  assert(deltas.some(e=>e.message.metadata.timings?.predicted_n>1 && e.message.content));
+  assert(deltas.every(e=>e.message.status==='streaming'));
   let saved=(await f.api(`/api/conversations/${c.id}`)).body;
   const answer=saved.messages.find(m=>m.id===r.body.messageId);
   assert.deepEqual(f.model.requests[0].stream_options,{include_usage:true});
+  assert.equal(f.model.requests[0].timings_per_token,true);assert.equal(f.model.requests[0].return_progress,true);
+  assert.deepEqual(answer.metadata.promptProgress,{total:9,cache:2,processed:9,time_ms:20});
   assert.deepEqual(answer.metadata.timings,{prompt_n:7,predicted_n:6,draft_n:10,draft_n_accepted:4,
     prompt_ms:20,prompt_per_second:350,predicted_ms:60,predicted_per_second:100});
   assert.equal(answer.metadata.usage.prompt_tokens,9);assert.equal(answer.metadata.usage.completion_tokens,6);
@@ -104,10 +139,11 @@ test('Final usage-only stream statistics persist through regeneration and native
   assert(answer.metadata.observed.firstTextMs>=0);
   // Reasoning is sent before the delayed answer. It must count as the first text.
   assert(answer.metadata.observed.durationMs-answer.metadata.observed.firstTextMs>=200);
-  const nonstream=await f.api('/api/providers','POST',{name:'JSON model',baseUrl:f.model.url,capabilities:{...caps,streaming:false}});
+  const nonstream=await f.api('/api/providers','POST',{name:'JSON model',baseUrl:f.model.url,capabilities:{...caps,streaming:false,llamaCppTimings:true}});
   const regenerated=await f.generate(saved,{providerId:nonstream.body.id,regenerate:true,parentId:answer.parentId,content:undefined});
   assert.equal((await f.waitJob(regenerated.body.jobId)).status,'complete');
   assert.equal(f.model.requests[1].stream,false);assert.equal(f.model.requests[1].stream_options,undefined);
+  assert.equal(f.model.requests[1].timings_per_token,undefined);assert.equal(f.model.requests[1].return_progress,undefined);
   saved=(await f.api(`/api/conversations/${c.id}`)).body;
   assert.deepEqual(saved.messages.find(m=>m.id===answer.id).metadata,answer.metadata);
   const jsonAnswer=saved.messages.find(m=>m.id===regenerated.body.messageId);
