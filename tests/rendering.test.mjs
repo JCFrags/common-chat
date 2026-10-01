@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { markdown, diagramProblem, RENDER_LIMITS } from '../public/markdown.js';
 import { sidebarSwipe } from '../public/touch.js';
+import { normalizeDiagram } from '../public/diagram-source.js';
 
 test('Rich rendering supports nested tasks, math, highlighted code, safe diagrams, and visible bounded fallbacks', () => {
   const rich = markdown('# Heading\n\n- [x] done\n  - nested **bold** and ~~deleted~~\n\n> quote\n> second\n\n| A | B |\n| :--- | ---: |\n| one | two |\n\nInline $x^2$ and \\(y_1\\).\n\n$$\\frac{1}{2}$$\n\n\\[\nz^2\n\\]\n\n```python\ndef example():\n  return 42\n```\n\n```mermaid\nflowchart LR\nA-->B\n```');
@@ -21,6 +22,58 @@ test('Rich rendering supports nested tasks, math, highlighted code, safe diagram
   assert(malicious.includes('&lt;script&gt;')); assert(malicious.includes('rel="noopener noreferrer"'));
   assert.equal(diagramProblem('sequenceDiagram\nAlice->>Bob: Hello'), null);
   for (const source of ['---\nconfig:\n  securityLevel: loose\n---\nflowchart LR\nA-->B', 'flowchart LR\n%%{init: {securityLevel: "loose"}}%%\nA-->B', 'flowchart LR\nclick A "https://example.test"', 'flowchart LR\nA@{img: "https://tracker.example/a"}', 'flowchart LR\nA[<img src=x>]', 'flowchart LR\nclassDef x fill:url(test)', 'mindmap\nroot', 'flowchart LR\n' + 'A;'.repeat(101)]) assert(diagramProblem(source), source);
+});
+
+test('Mermaid normalization discards bounded styling without changing labels or original source', async () => {
+  const source = 'flowchart LR; A:::accent-->B; style A fill:#fff,stroke-width:2px; classDef accent fill:red; class A,B accent; linkStyle 0 stroke:blue;';
+  const normalized = normalizeDiagram(source);
+  assert.equal(normalized.problem, null);
+  assert.equal(normalized.source, 'flowchart LR; A-->B;;;;;');
+  const { default: mermaid } = await import('../public/vendor/mermaid.js');
+  mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', htmlLabels: false });
+  assert.equal((await mermaid.parse(normalized.source)).diagramType, 'flowchart-v2');
+  const rendered = markdown(`\`\`\`mermaid\n${source}\n\`\`\``);
+  assert(rendered.includes('data-diagram-source=""'));
+  assert(rendered.includes('data-code-language="mermaid" data-code-complete="true"'));
+  assert(markdown(`\`\`\`mermaid\n${source}\n\`\`\``, { streaming: true }).includes('data-code-complete="false"'));
+  assert(markdown(`\`\`\`mermaid\n${source}`).includes('data-code-complete="false"'));
+  assert(rendered.includes('classDef accent fill:red'));
+  assert(rendered.includes('A:::accent--&gt;B')); // Copy still reads the original code text.
+  const state = normalizeDiagram('stateDiagram-v2\nstate Group {\nA:::accent --> B\nclassDef accent fill:red\nclass A accent\n}');
+  assert.equal(state.problem, null);
+  assert.equal(state.source, 'stateDiagram-v2\nstate Group {\nA --> B\n\n\n}');
+  assert.equal(normalizeDiagram('classDiagram\nclass Image:::accent\nclassDef accent fill:red').source, 'classDiagram\nclass Image\n');
+  for (const source of [
+    'flowchart LR\nA[style; classDef; click; callback; href; src; image; icon]-->B',
+    'flowchart LR\nA["class; A:::accent"]-->|style; click|B',
+    'sequenceDiagram\nAlice->>Bob: click the image to change its style',
+    'classDiagram\nclass Image {\n+style()\n+click()\n}',
+  ]) {
+    assert.equal(diagramProblem(source), null);
+    assert.equal(normalizeDiagram(source).source, source);
+  }
+  for (const source of [
+    'flowchart LR;style A fill:red;click A call callback()',
+    'flowchart LR\nclick\nA call callback()',
+    'flowchart LR\nstyle\nA fill:red',
+    'flowchart LR\nstyle A fill:red click A call callback()',
+    'flowchart LR\nclassDef accent fill:url(https://example.test/x)',
+    'flowchart LR\nstyle A fill:red %%{init: {securityLevel: "loose"}}%%',
+    'flowchart LR\nclass A accent click A call callback()',
+    'flowchart LR\nA:::accent@{img: "local.png"}',
+    'flowchart LR\nA[<b>style</b>]',
+    'classDiagram\nlink Image "/local" "Open"',
+    'sequenceDiagram\nAlice->>Bob: Hello(\nlink Alice: /local\n)',
+    'sequenceDiagram\nAlice->>Bob: Hello "\nlink Alice: /local',
+    'stateDiagram-v2\nstate Group {\nclick A call callback()\n}',
+    'classDiagram\nnamespace Group {\nlink Image "/local" "Open"\n}',
+    'flowchart LR\nA[unterminated\nstyle A fill:red',
+  ]) {
+    assert(diagramProblem(source));
+    const rejected = markdown(`\`\`\`mermaid\n${source}\n\`\`\``);
+    assert(!rejected.includes('data-diagram-source=""'));
+    assert(rejected.includes('data-code-language="mermaid" data-code-complete="true"'));
+  }
 });
 
 test('Mobile sidebar swipe classification excludes desktop, slow, short, vertical, and wrong-direction gestures', () => {

@@ -1,7 +1,8 @@
 import { MarkdownIt, katex, hljs, DOMPurify } from './vendor/rich-text.js';
+import { normalizeDiagram, DIAGRAM_LIMITS } from './diagram-source.js';
 
 export const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
-export const RENDER_LIMITS = Object.freeze({ message: 128 * 1024, code: 16 * 1024, math: 4096, mathCount: 100, mathTotal: 32 * 1024, diagram: 8192, diagramLines: 100, diagrams: 4 });
+export const RENDER_LIMITS = Object.freeze({ message: 128 * 1024, code: 16 * 1024, math: 4096, mathCount: 100, mathTotal: 32 * 1024, ...DIAGRAM_LIMITS, diagrams: 4 });
 const md = new MarkdownIt({ html: false, breaks: true, linkify: false, typographer: false, maxNesting: 32 });
 md.validateLink = value => {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; }
@@ -88,12 +89,7 @@ md.block.ruler.before('fence', 'math_block', (state, startLine, endLine, silent)
 md.renderer.rules.math_block = (tokens, i, options, env) => mathHtml(tokens[i].content, true, env) + '\n';
 
 export function diagramProblem(source) {
-  if (source.length > RENDER_LIMITS.diagram || source.split(/[;\n]/).length > RENDER_LIMITS.diagramLines || (source.match(/[A-Za-z0-9_]+/g) ?? []).length > 600) return 'Diagram size limit exceeded.';
-  if (!/^\s*(?:graph\b|flowchart\b|sequenceDiagram\b|classDiagram\b|stateDiagram(?:-v2)?\b|erDiagram\b|pie\b)/.test(source)) return 'Unsupported diagram type.';
-  // Reject input configuration before the library can parse it. Restrict styling,
-  // callbacks and network-capable shapes even during the temporary render stage.
-  if (/%%\s*\{|^\s*---|\b(?:click|classDef|linkStyle|style|callback|href|src|image|icon)\b|<\/?[a-z!]|(?:https?:|data:|javascript:|url\s*\(|@\{)/im.test(source)) return 'Diagram configuration, HTML, styles, links, images, and callbacks are not supported.';
-  return null;
+  return normalizeDiagram(source).problem;
 }
 md.renderer.rules.fence = (tokens, i, options, env) => {
   const token = tokens[i], source = token.content.replace(/\n$/, ''), name = token.info.trim().split(/\s+/)[0].slice(0, 80).toLowerCase();
@@ -104,7 +100,7 @@ md.renderer.rules.fence = (tokens, i, options, env) => {
   if (name === 'mermaid') {
     const problem = diagramProblem(source) ?? (++env.diagrams > RENDER_LIMITS.diagrams ? 'Diagram count limit exceeded.' : null);
     const note = problem ?? (env.streaming ? 'Diagram rendering waits until the response ends.' : !closed ? 'Incomplete Mermaid fence.' : 'Rendering diagram...');
-    return `<div class="code-block diagram-block"${!problem && closed && !env.streaming ? ' data-diagram-source=""' : ''}><div class="code-toolbar"><span>Mermaid</span>${copy}</div><p class="render-note" data-diagram-status>${escape(note)}</p><div class="diagram-output"></div><details class="diagram-source"${problem || !closed || env.streaming ? ' open' : ''}><summary>Diagram source</summary>${plain}</details></div>\n`;
+    return `<div class="code-block diagram-block" data-code-language="mermaid" data-code-complete="${closed && !env.streaming}"${!problem && closed && !env.streaming ? ' data-diagram-source=""' : ''}><div class="code-toolbar"><span>Mermaid</span>${copy}</div><p class="render-note" data-diagram-status>${escape(note)}</p><div class="diagram-output"></div><details class="diagram-source"${problem || !closed || env.streaming ? ' open' : ''}><summary>Diagram source</summary>${plain}</details></div>\n`;
   }
   let rendered = escape(source), note = !closed ? 'Incomplete code fence.' : '';
   if (source.length > RENDER_LIMITS.code) note = 'Highlighting size limit exceeded. Source is shown.';

@@ -1,5 +1,5 @@
 import { DOMPurify } from './vendor/rich-text.js';
-import { diagramProblem } from './markdown.js';
+import { normalizeDiagram } from './diagram-source.js';
 
 let generation = 0, serial = Promise.resolve(), library, nextId = 0;
 const cache = new Map(); let cacheBytes = 0;
@@ -59,14 +59,14 @@ export function renderDiagrams(root, onRendered = () => {}) {
       const source = block.querySelector('.diagram-source code').textContent, status = block.querySelector('[data-diagram-status]');
       let stage;
       try {
-        const problem = diagramProblem(source); if (problem) throw new Error(problem);
+        const normalized = normalizeDiagram(source); if (normalized.problem) throw new Error(normalized.problem);
         let svg = cache.get(source);
         if (!svg) {
           const api = await mermaid();
           if (current !== generation || !block.isConnected) return;
           stage = document.createElement('div'); stage.className = 'diagram-stage'; stage.setAttribute('aria-hidden', 'true'); document.body.append(stage);
           // Do not call bindFunctions. The source and output cannot add callbacks.
-          ({ svg } = await api.render(`cc-diagram-${++nextId}`, source, stage));
+          ({ svg } = await api.render(`cc-diagram-${++nextId}`, normalized.source, stage));
           if (svg.length <= 512 * 1024) {
             cache.set(source, svg); cacheBytes += source.length + svg.length;
             while (cache.size > 16 || cacheBytes > 1024 * 1024) { const oldest = cache.keys().next().value; cacheBytes -= oldest.length + cache.get(oldest).length; cache.delete(oldest); }
