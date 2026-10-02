@@ -7,6 +7,7 @@
   <title>Common Chat</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/workspace.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -27,7 +28,7 @@
   <div id="app" hidden>
     <button id="sidebar-backdrop" aria-label="Close sidebar"></button>
     <aside id="sidebar">
-      <div class="brand row"><div class="brand-mark" data-icon="chat"></div><span class="brand-name">Common Chat</span><span class="badge">0.1</span></div>
+      <div class="brand row"><div class="brand-mark" data-icon="chat"></div><span class="brand-name">Common Chat</span><span class="badge" id="release-badge">preview</span></div>
       <button id="new-chat"><span data-icon="plus"></span>New chat</button>
       <div class="search"><span data-icon="search"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations"></div>
       <div class="sidebar-caption">Conversations</div>
@@ -85,6 +86,7 @@
         <label class="check"><input id="cap-streaming" type="checkbox" checked>Streaming</label>
         <label class="check"><input id="cap-llamaCppTimings" type="checkbox">Live llama.cpp statistics (llama.cpp only)</label>
         <label class="check"><input id="cap-vision" type="checkbox">Image input</label>
+        <label class="check"><input id="cap-tools" type="checkbox">Function tools (per-chat permission required)</label>
         <label class="check"><input id="cap-systemPrompt" type="checkbox" checked>System prompts</label>
         <label class="check"><input id="cap-temperature" type="checkbox" checked>Temperature</label>
         <label class="check"><input id="cap-topP" type="checkbox" checked>Top-p</label>
@@ -115,7 +117,7 @@
       <label class="field">Appearance<select id="theme-select"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
       <section><h3>Conversation history</h3><p class="small">Export messages, branches, and attachments as JSON. Exports do not include login credentials or connection keys.</p><button id="export-all"><span data-icon="download"></span>Export all conversations</button></section>
       <section><h3>Server storage</h3><p class="small">This version uses one shared owner account. For a full backup, stop the server and copy the data directory. Keep master.key with the database.</p></section>
-      <section><h3>About this version</h3><p class="small">Common Chat 0.1.0. A standalone implementation with theme tokens adapted from llama.cpp. This is not the full upstream Svelte application.</p></section>
+      <section><h3>About this version</h3><p class="small" id="release-info">Common Chat 0.2 preview.</p><p class="small">A standalone implementation with theme tokens adapted from llama.cpp. Updates are applied by the administrator while the server is idle. Workspace files and their revisions require a full backup, not a conversation export.</p></section>
       <div class="dialog-footer"><button id="logout">Sign out on this device</button></div>
     </div>
   </dialog>

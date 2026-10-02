@@ -2,6 +2,9 @@ import { markdown, escape as esc } from './markdown.js';
 import { renderDiagrams, cancelDiagrams } from './diagrams.js';
 import { installSidebarGestures } from './touch.js';
 import { installPreviews, cancelPreviews } from './previews.js';
+import { installWorkspace } from './workspace.js';
+import { installMediaControls, writeMediaCapabilities, readMediaCapabilities, updateMediaHints, validateUpload, attachmentHtml } from './media.js';
+import { installToolControls, toolActivityHtml } from './tool-controls.js';
 import { createDraftStore, DRAFT_LOGOUT_KEY } from './drafts.js';
 const $ = selector => document.querySelector(selector);
 const icons = {
@@ -23,7 +26,7 @@ fillIcons();
 let draftWarning = '';
 const drafts = createDraftStore({ onWarning: message => { draftWarning = message; renderDraftStatus(); } });
 const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, draftKey: undefined, loading: false, missing: false, openReasoning: new Set(), openStats: new Set(), authenticated: false };
-let events, toastTimer, searchTimer, listTimer, pendingCheck = false;
+let events, toastTimer, searchTimer, listTimer, pendingCheck = false, workspaceUI, toolControls;
 const selectedProvider = () => state.providers.find(p => p.id === $('#provider-select').value);
 const routeId = () => location.hash.slice(1) || null;
 const uuid = () => {
@@ -55,6 +58,7 @@ function toast(message) {
 }
 function showLogin() {
   state.authenticated = false; events?.close(); cancelDiagrams(); cancelPreviews();
+  workspaceUI?.close(); toolControls?.clear();
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('#app').hidden = true; $('#login-screen').hidden = false; $('#password').focus();
 }
@@ -115,6 +119,7 @@ function renderDraft() {
   renderDraftStatus(); updateControls();
 }
 function updateControls() {
+  toolControls?.refresh(); updateMediaHints(selectedProvider());
   const unavailable = state.loading || state.missing || !!state.draftKey && state.conversation?.id !== state.draftKey;
   const running = !!state.conversation?.activeJob || state.conversation?.messages.some(m => m.status === 'streaming');
   $('#stop').hidden = !running;
@@ -173,9 +178,7 @@ function messageHtml(m, c) {
   const siblings = c.messages.filter(x => x.parentId === m.parentId && x.role === m.role).sort((a,b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
   const index = siblings.findIndex(x => x.id === m.id), active = !!c.activeJob;
   const label = m.role === 'assistant' ? m.model ?? 'Assistant' : m.role === 'user' ? 'You' : m.role === 'tool' ? 'Imported tool record' : 'System';
-  const files = m.attachments.map(a => a.kind === 'image'
-    ? `<a href="/api/attachments/${encodeURIComponent(a.id)}" target="_blank" rel="noopener"><img class="attached-image" src="/api/attachments/${encodeURIComponent(a.id)}" alt="${esc(a.name)}" loading="lazy"></a>`
-    : `<a class="file-link" href="/api/attachments/${encodeURIComponent(a.id)}" download="${esc(a.name)}">${esc(a.name)} <span class="muted">${Math.ceil(a.size / 1024)} KiB</span></a>`).join('');
+  const files = m.attachments.map(attachmentHtml).join('');
   const thinking = m.reasoning ? `<details class="reasoning" data-reasoning="${esc(m.id)}" ${state.openReasoning.has(m.id) ? 'open' : ''}><summary>Reasoning</summary><div class="message-body">${markdown(m.reasoning, { streaming: m.status === 'streaming' })}</div></details>` : '';
   const status = m.status === 'complete' ? '' : `<span class="badge">${esc(m.status)}</span>`;
   const body = m.role === 'user' ? esc(m.content) : markdown(m.content, { streaming: m.status === 'streaming' });
@@ -184,7 +187,7 @@ function messageHtml(m, c) {
   const error = m.metadata.error ? `<div class="message-error">${esc(m.metadata.error)}</div>` : '';
   const unsupported = m.metadata.unsupportedAttachments?.length ? `<div class="message-error">Archived attachments are retained in the export but cannot be sent: ${m.metadata.unsupportedAttachments.map(esc).join(', ')}.</div>` : '';
   const meta = `${m.providerName ? esc(m.providerName) : ''}${m.metadata.finishReason === 'length' ? ' · Output token limit reached' : ''}`;
-  return `<article class="message ${esc(m.role)}" data-message="${esc(m.id)}"><div class="message-header"><strong>${esc(label)}</strong>${status}</div>${thinking}<div class="message-body">${body || (m.status === 'streaming' ? '<span class="muted">Generating...</span>' : '')}</div>${files ? `<div class="file-links">${files}</div>` : ''}${error}${unsupported}${meta ? `<div class="message-meta">${meta}</div>` : ''}${statisticsHtml(m)}<div class="message-actions">${actions}${branches}</div></article>`;
+  return `<article class="message ${esc(m.role)}" data-message="${esc(m.id)}"><div class="message-header"><strong>${esc(label)}</strong>${status}</div>${thinking}<div class="message-body">${body || (m.status === 'streaming' ? '<span class="muted">Generating...</span>' : '')}</div>${files ? `<div class="file-links">${files}</div>` : ''}${toolActivityHtml(m)}${error}${unsupported}${meta ? `<div class="message-meta">${meta}</div>` : ''}${statisticsHtml(m)}<div class="message-actions">${actions}${branches}</div></article>`;
 }
 function renderThread(forceBottom = false) {
   const thread = $('#thread'), top = thread.scrollTop, bottom = thread.scrollHeight - top - thread.clientHeight < 110;
@@ -215,11 +218,16 @@ function renderThread(forceBottom = false) {
       if (old?.renderSourceKey === sourceKey) {
         node = old;
         // Update statistics, actions and metadata without moving the body.
-        for (const name of ['message-header', 'message-stats', 'message-actions', 'message-meta', 'message-error', 'file-links']) {
+        for (const name of ['message-header', 'message-stats', 'message-actions', 'message-meta', 'message-error', 'tool-activity']) {
           const oldPart = old.querySelector(`:scope > .${name}`), newPart = fresh.querySelector(`:scope > .${name}`);
           if (oldPart && newPart) oldPart.replaceWith(newPart);
           else if (oldPart) oldPart.remove();
           else if (newPart) old.append(newPart);
+        }
+        const oldFiles = old.querySelector(':scope > .file-links'), newFiles = fresh.querySelector(':scope > .file-links');
+        if (oldFiles?.innerHTML !== newFiles?.innerHTML) {
+          if (oldFiles && newFiles) oldFiles.replaceWith(newFiles);
+          else if (oldFiles) oldFiles.remove(); else if (newFiles) old.append(newFiles);
         }
       } else if (old) old.replaceWith(fresh);
       node.renderSourceKey = sourceKey; keep.add(node);
@@ -247,6 +255,7 @@ async function loadCurrent(forceBottom = false) {
   if (!state.authenticated || cid !== routeId() || cid !== state.draftKey) return;
   if (state.conversation?.id === cid && state.conversation.version > c.version) return;
   state.conversation = c; state.missing = false; renderThread(forceBottom); renderList(); renderDraft();
+  workspaceUI?.refresh();
 }
 async function navigate(cid, known = null) {
   if (state.busy || state.retry && cid !== state.draftKey) {
@@ -267,7 +276,7 @@ async function navigate(cid, known = null) {
     const last = [...pathMessages(state.conversation)].reverse().find(m => m.providerId && state.providers.some(p => p.id === m.providerId));
     if (last) { $('#provider-select').value = last.providerId; $('#model-input').value = last.model ?? ''; loadModels(false).catch(() => {}); }
   }
-  renderList(); updateControls(); $('#prompt').focus(); checkPending();
+  renderList(); updateControls(); workspaceUI?.refresh(); $('#prompt').focus(); checkPending();
 }
 async function createConversation() {
   const previousKey = state.draftKey;
@@ -277,7 +286,8 @@ async function createConversation() {
   const draft = currentDraft();
   // Save the destination before removing the new-chat slot. Never migrate on a refresh.
   if (drafts.set(c.id, draft)) drafts.delete(previousKey, draft);
-  history.pushState(null, '', `#${c.id}`); state.conversation = c; state.draftKey = c.id; return c;
+  history.pushState(null, '', `#${c.id}`); state.conversation = c; state.draftKey = c.id;
+  toolControls?.created(c.id); return c;
 }
 async function newChat() { await navigate(null); }
 async function refreshProviders() {
@@ -338,7 +348,7 @@ async function sendMessage(event) {
       const providerId = $('#provider-select').value, model = $('#model-input').value.trim();
       const c = state.conversation ?? await createConversation();
       pending = { cid: c.id, body: { requestId: uuid(), expectedVersion: c.version, providerId, model,
-        parentId: state.editing ? state.editing.parentId : c.activeLeaf, content, attachments: attachmentIds, settings: c.settings } };
+        parentId: state.editing ? state.editing.parentId : c.activeLeaf, content, attachments: attachmentIds, settings: c.settings, tools: toolControls.read() } };
     }
     state.retry = pending; rememberDraft(); renderDraft();
     await api(`/api/conversations/${encodeURIComponent(pending.cid)}/generate`, 'POST', pending.body);
@@ -357,7 +367,7 @@ async function regenerate(messageId) {
   if (!m?.parentId) return;
   state.busy = true; updateControls();
   const pending = { cid: c.id, body: { requestId: uuid(), expectedVersion: c.version, providerId: $('#provider-select').value,
-    model: $('#model-input').value.trim(), parentId: m.parentId, regenerate: true, settings: c.settings } };
+    model: $('#model-input').value.trim(), parentId: m.parentId, regenerate: true, settings: c.settings, tools: toolControls.read() } };
   try {
     state.retry = pending; rememberDraft(); renderDraft();
     await api(`/api/conversations/${c.id}/generate`, 'POST', pending.body);
@@ -420,6 +430,8 @@ function fillConnectionForm() {
   $('#connection-key').placeholder = p?.hasKey ? 'A key is saved. Leave blank to keep it.' : 'Optional API key';
   $('#connection-models').value = p?.models.join('\n') ?? '';
   for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens','llamaCppTimings']) $('#cap-'+key).checked = p ? p.capabilities[key] === true : !['vision','llamaCppTimings'].includes(key);
+  $('#cap-tools').checked = p?.capabilities.tools === true;
+  writeMediaCapabilities(p?.capabilities);
   $('#token-parameter').value = p?.capabilities.tokenParameter ?? 'max_tokens';
   $('#connection-error').textContent = ''; $('#delete-provider').hidden = !p;
 }
@@ -428,6 +440,8 @@ async function saveProvider(event) {
   const pid = $('#edit-provider').value, capabilities = {};
   for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens','llamaCppTimings']) capabilities[key] = $('#cap-'+key).checked;
   capabilities.tokenParameter = $('#token-parameter').value;
+  capabilities.tools = $('#cap-tools').checked;
+  Object.assign(capabilities, readMediaCapabilities());
   try {
     const p = await api(pid ? `/api/providers/${pid}` : '/api/providers', pid ? 'PUT' : 'POST', {
       name: $('#connection-name').value, baseUrl: $('#connection-url').value, apiKey: $('#connection-key').value,
@@ -478,7 +492,7 @@ async function uploadFiles(files) {
     const c = state.conversation ?? await createConversation();
     for (const file of files) {
       if (file.size > 10 * 1024 * 1024) throw new Error(`${file.name} exceeds 10 MiB.`);
-      const mime = file.type || 'text/plain';
+      const mime = validateUpload(file, selectedProvider());
       const data = await readAsBase64(file);
       const a = await api(`/api/conversations/${c.id}/attachments`, 'POST', { name: file.name, mime, data });
       if (!state.authenticated || state.draftKey !== c.id) return;
@@ -548,6 +562,8 @@ async function boot() {
     const session = await api('/api/session'); state.preferences = session.settings; state.authenticated = true;
     applyTheme(); $('#login-screen').hidden = true; $('#app').hidden = false;
     $('#logout').hidden = session.authenticationRequired === false;
+    $('#release-info').textContent = `Common Chat ${session.version} · ${session.release?.channel ?? 'preview'} · ${session.release?.commit?.slice(0, 12) ?? 'development'}`;
+    $('#release-badge').textContent = session.release?.channel ?? 'preview';
     await Promise.all([refreshList(), refreshProviders()]); await loadModels(false);
     await navigate(routeId());
     connectEvents();
@@ -685,4 +701,16 @@ window.addEventListener('beforeunload', event => {
   rememberDraft();
   if (drafts.hasUnsaved || state.busy) { event.preventDefault(); event.returnValue = ''; }
 });
+installMediaControls();
+toolControls = installToolControls({ getProvider: selectedProvider, getConversation: () => state.conversation,
+  busy: () => state.busy || state.loading || !!state.retry || !!state.conversation?.activeJob });
+workspaceUI = installWorkspace({ api, getConversation: () => state.conversation,
+  ensureConversation: async () => {
+    if (state.busy || state.loading || state.retry || state.missing) throw new Error('Finish the current chat action before opening files.');
+    if (state.conversation) return state.conversation;
+    state.busy = true; updateControls();
+    try { const c = await createConversation(); renderThread(); scheduleList(); return c; }
+    finally { state.busy = false; updateControls(); }
+  },
+  onChanged: async ({ conversationId }) => { if (state.conversation?.id === conversationId) await loadCurrent(); scheduleList(); }, toast });
 boot();

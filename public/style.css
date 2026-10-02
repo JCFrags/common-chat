@@ -253,4 +253,12 @@ dialog legend { padding: 0 6px; font-size: 12px; }
   dialog .form-grid { grid-template-columns: 1fr; }
   .composer-footer { font-size: 9px; }
 }
+.tool-controls { font-size: 12px; margin: 5px 0 8px; }
+.tool-controls summary { cursor: pointer; color: var(--muted-foreground); }
+.tool-controls .checks { grid-template-columns: 1fr; gap: 8px; }
+.tool-controls p { margin: 8px 0; }
+.tool-activity { margin: 10px 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.tool-activity summary { cursor: pointer; font-size: 12px; }
+.tool-activity pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font-size: 12px; }
+#media-input-hint { font-size: 10px; margin-top: 6px; color: var(--muted-foreground); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
