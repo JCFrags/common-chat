@@ -1,8 +1,8 @@
 # Operations
 
-STE-style, not verified for ASD-STE100 compliance.
+This guide describes the community 0.2 preview for a first deployment before stable release. Use Node.js 24 for the chat server. The minimum version is 22.16.0 with built-in `node:sqlite`. Shipped browser assets need no build for normal startup.
 
-This guide describes Common Chat 0.1.0. The native Node deployment was tested on Linux. The Docker configuration is supplied but was not built in this environment.
+The existing backend baseline contains 46 tests. Combined preview integration and deployment acceptance are still pending. The [original verification report](VERIFICATION.md) preserves earlier Node/browser results and their limitations; it is not new preview acceptance. See [release status and update procedures](RELEASES.md).
 
 ## Environment
 
@@ -15,17 +15,45 @@ This guide describes Common Chat 0.1.0. The native Node deployment was tested on
 | `CHAT_PASSWORD` | Random initial password | Initial owner password. It does not replace an existing password. |
 | `BIND_ADDRESS` | `127.0.0.1` | Published host address for Compose only. |
 
-The start command reads `.env` when that file exists. Ordinary environment variables take precedence. The server validates the HTTP Host and Origin headers against `PUBLIC_URL`.
+The start command reads `.env` when that file exists. Ordinary environment variables take precedence. The server validates the HTTP Host and Origin headers against `PUBLIC_URL`. Release identity and the optional `CHAT_UPDATE_CHANNEL` policy label are described in [RELEASES.md](RELEASES.md). The label does not install updates or restart services.
 
-The data directory must belong to one server process. This release uses a process lock and SQLite. It does not support multiple replicas or shared network storage.
+The data directory must belong to one server process. This preview uses a process lock and SQLite. It does not support multiple replicas or shared network storage.
+
+## Preview deployment and updates
+
+Keep the previous source version and a complete offline backup before replacing an installation. Stop or cancel active generations and executions before stopping the server. Updates and restarts are explicit operator actions, not automatic feature activation. The chat application does not start or configure a model server. Follow the [release guide](RELEASES.md) for the selected preview and rollback boundary.
+
+Use temporary conversations and synthetic files for initial checks. Confirm sign-in, reconnect, draft recovery, workspace revision conflicts, and backup restoration before using valuable data. Check runner-backed features separately when a runner is configured. A successful build, an available socket, or the 46-test baseline does not establish integrated browser, runner, or live-model acceptance.
+
+## Device-local drafts
+
+Composer drafts use localStorage for the current browser profile and origin. Reloads and browser restarts preserve them only when site data remains available. Drafts do not move with a server backup or appear on another device. They contain unsent text, attachment references, edit state, and unresolved submission details, but not provider secrets or cookies. The records are not encrypted.
+
+A storage warning means important input needs a separate copy before closing the page. Explicit Sign out discards Common Chat drafts on that origin in the current browser after confirmation. Session expiry does not. Trusted-local mode hides Sign out, so use Discard draft or the browser's site-data controls. See [draft recovery and privacy](DRAFTS.md).
+
+Workspace file, code, and package editor buffers remain in page memory, not localStorage. Save or copy their unsaved changes before closing or reloading. See [workspace interface behavior](WORKSPACE-UI.md).
+
+## Workspace and optional runner
+
+Workspace text files, revisions, and local keyword search do not require a container engine. PDF/DOCX extraction, media inspection, Python/shell execution, and package operations use the separately installed runner. Without extraction, uploaded documents remain available but show an explicit indexing limitation. Uninspected audio/video cannot be accepted as verified input.
+
+The runner is optional and is not part of ordinary `npm start` provisioning. Its supplied backend is rootless Podman on Linux with cgroup v2, not Docker Engine or a remote engine. Use the [runner installation guide](RUNNER.md) and its pinned `runner/Dockerfile` for the current image, service, policy, and socket settings.
+
+Run the broker under a separate operating-system account. Give the application access only to the restricted broker socket, with its own access group. Keep engine access private to the runner account. Never mount an engine socket into the chat app or an untrusted worker. Never mount the application's data directory into a worker.
+
+Workers receive copied input bytes and return bounded output files. Code execution has no network. A separate restricted registry phase can fetch permitted dependencies only with package permission. Runtime readiness is reported by `/api/runtime`. A blocked or missing runner must not fall back to a host shell. Rootless containers are not a virtual-machine security boundary.
+
+A connection's tools capability and each generation's workspace, execute, and package permissions are separate controls. Execution permission gives code access to its copied conversation workspace even if direct file tools are off. A lost execution submission response requires inspecting recent jobs and files, not blindly repeating the code. See [tools and execution limits](TOOLS.md) and [workspace revision/storage rules](WORKSPACE.md).
+
+Audio/video additionally require an explicit `llama_cpp` input selection for the provider. Browser playback does not establish model support. Video input sends visuals, not its soundtrack. Codec, duration, dimensions, branch budgets, and the native payload contract are in [MEDIA.md](MEDIA.md).
 
 ## Trusted-local deployment
 
-The home-server deployment adds an opt-in `CHAT_TRUSTED_LOCAL=true` mode. The default mode still requires a password.
+The application offers an opt-in `CHAT_TRUSTED_LOCAL=true` mode. The default mode still requires a password.
 
 WARNING
 
-Trusted-local mode has no application login. Every allowed client can read all conversations, change connections, and use saved API keys. HTTP also exposes conversation content on the local network. Do not publish this deployment to the internet.
+Trusted-local mode has no application login. Every allowed client can read conversations and workspace files, change connections, use saved API keys, and request enabled execution features. HTTP also exposes content on the local network. Do not publish this deployment to the internet.
 
 1. Set `CHAT_TRUSTED_LOCAL=true` and an exact `PUBLIC_URL`.
 2. Keep `HOST=127.0.0.1`. The application rejects non-loopback listeners and requests in this mode.
@@ -58,7 +86,7 @@ docker compose logs chat
 6. Open the configured address.
 7. Sign in with the configured or generated password.
 
-The container runs as the `node` user. The data volume remains writable. The root filesystem is read-only. Compose drops Linux capabilities and enables a health check.
+The container runs as the `node` user. The data volume remains writable. The root filesystem is read-only. Compose drops Linux capabilities and enables a health check. This chat-service configuration does not provision the optional runner. Do not add Docker or Podman engine-socket access to the app container. Follow [RUNNER.md](RUNNER.md) for the separate broker boundary.
 
 A non-loopback `BIND_ADDRESS` publishes the port beyond the host. This does not enable TLS. A separate HTTPS reverse proxy or encrypted tunnel is still required for protected remote access.
 
@@ -82,7 +110,7 @@ The server marks session cookies Secure when `PUBLIC_URL` uses HTTPS. It also su
 
 CAUTION
 
-Stop the server before backup. Keep the database, attachments, and `master.key` together. A partial copy can lose history or prevent key decryption.
+Stop the server before backup. Keep the database, attachments, workspace blobs, and `master.key` together. A partial copy can lose history or file revisions, or prevent key decryption.
 
 1. Stop the server with Ctrl+C or SIGTERM.
 2. Create a backup in a new directory.
@@ -94,7 +122,9 @@ npm run backup -- ./data ./backups/snapshot-001
 3. Copy the complete backup to protected storage.
 4. Restart the server.
 
-The script refuses a directory with `server.lock`. It checks SQLite integrity and creates a SHA-256 file manifest. Backup files contain private conversations, session records, and the API key decryption key. File hashes detect changes but do not authenticate an untrusted backup source.
+The script refuses a directory with `server.lock`. It checks SQLite integrity and creates a SHA-256 file manifest. It recursively includes workspace blobs and additive workspace, execution, and package-specification tables. No new backup connector is required.
+
+Backup files contain private conversations, documents, session records, and the API key decryption key. They are not encrypted by the backup script. File hashes detect changes but do not authenticate an untrusted backup source. Browser drafts are not included. Conversation JSON exports also omit workspace files, so they are not substitutes for this full backup. Keep runner configuration and the selected worker image version separately. Disposable dependency directories are not workspace state.
 
 ## Native restore
 
@@ -107,7 +137,7 @@ npm run restore -- ./backups/snapshot-001 ./restored-data
 
 3. Set `DATA_DIR=./restored-data` in `.env`.
 4. Start the server.
-5. Sign in and inspect conversations and attachments.
+5. Sign in and inspect conversations, attachments, workspace revisions, and document citations.
 
 Restore verifies file sizes, hashes, paths, and SQLite integrity. It does not overwrite an existing destination. A restored backup also restores its saved password and sessions. A password reset revokes those sessions.
 
@@ -137,7 +167,7 @@ docker compose cp chat:/app/data ./backup-data
 docker compose start chat
 ```
 
-For restoration, the target volume must be empty. The copied directory must contain `chat.sqlite`, `master.key`, and `files`. Do not replace selected files in an existing database directory.
+For restoration, the target volume must be empty. Copy the complete data directory, including `chat.sqlite`, `master.key`, `files`, and `workspace` when present. Do not replace selected files in an existing database directory.
 
 1. Stop the target service.
 2. Copy the complete backup into its empty data volume.
@@ -154,7 +184,7 @@ docker compose run --rm --user root --cap-add CHOWN --cap-add DAC_OVERRIDE --cap
 
 4. Start the target service.
 
-These Docker procedures require verification on the deployment host. The Docker CLI was not available during this release test.
+These Docker procedures require verification on the deployment host. The [original verification report](VERIFICATION.md) records that Docker was unavailable for the earlier release. That report does not establish preview container or runner acceptance.
 
 ## Reset the owner password
 
@@ -229,7 +259,7 @@ Each gesture needs 64 pixels of horizontal movement within 800 ms, at most 40 pi
 
 ### Artifact and example views
 
-Completed `mermaid` fences, complete HTML/SVG documents, and browser fences marked `preview`, `run`, or `artifact` show results by default. Compact Copy, Source/Result, and Actions controls remain available above the result. Source is hidden until selected. Actions contains the editable sandbox, Stop, Restart, Console, and sandbox information. Console is hidden by default and opens on errors. For example, use `html preview` for a page and `javascript run` for browser code. Fences marked `example` or `source` show code instead, even if another artifact flag is present. Unlabeled HTML snippets, JavaScript, and CSS remain code-first. Python, shell, and Node.js code do not run.
+Completed `mermaid` fences, complete HTML/SVG documents, and browser fences marked `preview`, `run`, or `artifact` show results by default. Compact Copy, Source/Result, and Actions controls remain available above the result. Source is hidden until selected. Actions contains the editable sandbox, Stop, Restart, Console, and sandbox information. Console is hidden by default and opens on errors. For example, use `html preview` for a page and `javascript run` for browser code. Fences marked `example` or `source` show code instead, even if another artifact flag is present. Unlabeled HTML snippets, JavaScript, and CSS remain code-first. Python, shell, and Node.js code do not run in this browser sandbox. They require an explicit operation through the separately configured [isolated runner](TOOLS.md), not merely a code fence.
 
 Adjacent non-example CSS/JavaScript blocks are combined with the nearest HTML artifact without crossing another example or artifact. The combined source remains available under the owning artifact's Source control, with separate CSS/JavaScript copy controls. Related code blocks do not repeat their toolbars below the result. A model with system-prompt support receives these fence conventions. Saved prompts and message source remain unchanged. Use Result or Source to correct the view locally. Their accessible names remain "Show result" and "Show as code". Source stops an owning inline frame and opens its source. Stop removes the inline frame. Restart starts a fresh result. These controls do not edit the saved conversation.
 
@@ -276,6 +306,10 @@ A missing `master.key` prevents startup when a database already exists. Restore 
 
 A Host rejection usually means `PUBLIC_URL` differs from the browser address. A model connection failure usually needs a base URL, network, or credential check. The base URL must include `/v1` when the provider expects that prefix.
 
-An interrupted response is retained but not resumed automatically. Regenerate the response or send another message to continue. A conflicting edit requires a fresh conversation snapshot before retry.
+An interrupted response is retained but not resumed automatically. Regenerate the response or send another message to continue, with a new tool permission grant when needed. Inspect current workspace files before repeating an uncertain execution. Previously completed tool actions can remain even when the enclosing generation was interrupted.
+
+A conversation conflict requires a fresh conversation snapshot. A workspace conflict requires the current file revision, not a blind retry with a newly read version. Review the newer file before deliberately replacing it. Deleted workspace files retain revision history until conversation deletion and still count toward storage limits. See [WORKSPACE.md](WORKSPACE.md).
+
+If draft recovery fails, distinguish browser storage failure from missing server attachment bytes. If document indexing or media upload reports unavailable inspection, check runner readiness rather than assuming successful extraction. Enabling a provider checkbox does not install a runner or make an unsupported model compatible.
 
 This release has no independent security audit. Use one trusted owner and a restricted network. Avoid deployment as a public multi-user service.
