@@ -1,0 +1,25 @@
+[Unit]
+Description=Common Chat isolated runner (dedicated rootless user)
+Documentation=file:/opt/common-chat/docs/RUNNER.md
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/common-chat
+ExecStart=/usr/bin/node /opt/common-chat/runner/server.mjs
+Environment=RUNNER_STATE_DIR=%h/.local/state/common-chat-runner
+Environment=RUNNER_SOCKET=%t/common-chat-runner/api.sock
+Environment=RUNNER_IMAGE=localhost/common-chat-worker:1
+RuntimeDirectory=common-chat-runner
+RuntimeDirectoryMode=0750
+UMask=0077
+Delegate=yes
+# Rootless ID-mapping helpers need their setuid/file capabilities in the broker.
+# Each worker separately enforces no-new-privileges and drops every capability.
+NoNewPrivileges=no
+TasksMax=256
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+[Install]
+WantedBy=default.target
