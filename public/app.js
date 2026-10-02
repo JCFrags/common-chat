@@ -159,7 +159,9 @@ function renderThread(forceBottom = false) {
   const c = state.conversation, path = c ? pathMessages(c) : [];
   document.title = c ? `${c.title} | Common Chat` : 'Common Chat';
   if (!path.length) {
-    thread.innerHTML = `<div id="empty-state"><div class="brand-mark">${icon('chat')}</div><h1>Your models. Your conversations.</h1><p class="muted">Chat with the model server you choose.<br>Pick up the same conversation on your next device.</p><div class="empty-actions"><button class="primary" data-open-connections>${icon('plug')}${state.providers.length ? 'Manage connections' : 'Add a connection'}</button><button data-import>${icon('upload')}Import your chats</button></div><div class="empty-detail small">Conversations and attachments stay on this chat server.<br>Model endpoints only receive the context you send.</div></div>`;
+    thread.innerHTML = `<div id="empty-state"><h1>New chat</h1>${state.providers.length
+      ? '<p class="muted">What would you like to talk about?</p>'
+      : `<p class="muted">Add a connection to start chatting.</p><div class="empty-actions"><button class="primary" data-open-connections>${icon('plug')}Add a connection</button></div>`}</div>`;
   } else {
     // Keep completed message bodies in place. Replacing an iframe would restart
     // its code on every server update, even when the answer did not change.
@@ -238,6 +240,7 @@ async function refreshProviders() {
   const oldEdit = $('#edit-provider').value;
   $('#edit-provider').innerHTML = '<option value="">New connection</option>' + state.providers.map(p => `<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
   if (state.providers.some(p => p.id === oldEdit)) $('#edit-provider').value = oldEdit;
+  if ($('#empty-state')) renderThread();
   updateControls();
 }
 async function loadModels(notify = true) {
