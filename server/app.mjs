@@ -28,6 +28,7 @@ const assets = new Map([
   ['/workspace.css', ['workspace.css', 'text/css; charset=utf-8']],
   ['/media.js', ['media.js', 'text/javascript; charset=utf-8']],
   ['/tool-controls.js', ['tool-controls.js', 'text/javascript; charset=utf-8']],
+  ['/drafts.js', ['drafts.js', 'text/javascript; charset=utf-8']],
   ['/diagram-source.js', ['diagram-source.js', 'text/javascript; charset=utf-8']],
   ['/vendor/rich-text.js', ['vendor/rich-text.js', 'text/javascript; charset=utf-8']],
   ['/vendor/mermaid.js', ['vendor/mermaid.js', 'text/javascript; charset=utf-8']]

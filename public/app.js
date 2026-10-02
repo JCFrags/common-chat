@@ -2,6 +2,7 @@ import { markdown, escape as esc } from './markdown.js';
 import { renderDiagrams, cancelDiagrams } from './diagrams.js';
 import { installSidebarGestures } from './touch.js';
 import { installPreviews, cancelPreviews } from './previews.js';
+import { createDraftStore, DRAFT_LOGOUT_KEY } from './drafts.js';
 const $ = selector => document.querySelector(selector);
 const icons = {
   chat: '<path d="M4 4h16v12H9l-5 4V4Z"/><path d="M8 8h8M8 12h5"/>',
@@ -19,7 +20,9 @@ const icons = {
 const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] ?? icons.chat}</svg>`;
 function fillIcons(root = document) { root.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
 fillIcons();
-const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, drafts: new Map(), openReasoning: new Set(), openStats: new Set(), authenticated: false };
+let draftWarning = '';
+const drafts = createDraftStore({ onWarning: message => { draftWarning = message; renderDraftStatus(); } });
+const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, draftKey: undefined, loading: false, missing: false, openReasoning: new Set(), openStats: new Set(), authenticated: false };
 let events, toastTimer, searchTimer, listTimer, pendingCheck = false;
 const selectedProvider = () => state.providers.find(p => p.id === $('#provider-select').value);
 const routeId = () => location.hash.slice(1) || null;
@@ -62,33 +65,67 @@ function applyTheme() {
 }
 applyTheme();
 matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
+function currentDraft() {
+  return { text: $('#prompt').value, attachments: state.attachments, editing: state.editing, retry: state.retry };
+}
 function rememberDraft() {
-  state.drafts.set(state.conversation?.id ?? 'new', { text: $('#prompt').value, attachments: [...state.attachments], editing: state.editing });
+  if (state.draftKey !== undefined && state.authenticated) return drafts.set(state.draftKey, currentDraft());
+  return true;
 }
 function restoreDraft(cid) {
-  const draft = state.drafts.get(cid ?? 'new') ?? {};
-  $('#prompt').value = draft.text ?? ''; state.attachments = draft.attachments ?? []; state.editing = draft.editing ?? null;
+  state.draftKey = cid; state.missing = false;
+  const draft = drafts.get(cid) ?? {};
+  $('#prompt').value = draft.text ?? ''; state.attachments = draft.attachments ?? []; state.editing = draft.editing ?? null; state.retry = draft.retry ?? null;
   renderDraft();
+  validateAttachments();
+}
+function renderDraftStatus() {
+  const footer = $('.composer-footer');
+  footer.textContent = draftWarning || 'Drafts are saved only in this browser. History is stored on this server. Review model output before use.';
+  footer.setAttribute('role', 'status');
+}
+async function validateAttachments() {
+  const cid = state.draftKey, attachments = state.attachments;
+  if (!attachments.length || state.retry || !state.authenticated) return;
+  await Promise.all(attachments.map(async a => {
+    try {
+      // The API has no metadata-only file route. Stop reading after the status.
+      const response = await fetch(`/api/attachments/${encodeURIComponent(a.id)}`, { credentials: 'same-origin', cache: 'no-store' });
+      response.body?.cancel().catch(() => {});
+      if (cid !== state.draftKey || attachments !== state.attachments) return;
+      a.missing = response.status === 404;
+      a.unchecked = !response.ok && !a.missing;
+      if (response.status === 401) showLogin();
+    } catch { if (attachments === state.attachments) a.unchecked = true; }
+  }));
+  if (cid === state.draftKey && attachments === state.attachments) renderDraft();
+}
+function editTargetMissing() {
+  return state.editing && state.conversation && !state.conversation.messages.some(m => m.id === state.editing.id && m.role === 'user' && m.parentId === state.editing.parentId);
 }
 function renderDraft() {
-  $('#attachment-list').innerHTML = state.attachments.map(a => `<span class="attachment-chip"><span>${esc(a.name)}</span><button type="button" data-remove-file="${esc(a.id)}" aria-label="Remove ${esc(a.name)}">&times;</button></span>`).join('');
-  $('#draft-banner').hidden = !state.editing && !state.retry;
-  $('#draft-label').textContent = state.retry ? 'Send status is unknown. Retry uses the same request ID.' : state.editing ? 'Edit creates a new branch. The original stays saved.' : '';
-  $('#cancel-edit').hidden = !!state.retry;
+  $('#attachment-list').innerHTML = state.attachments.map(a => `<span class="attachment-chip"><span>${esc(a.name)}${a.missing ? ' (missing, remove and attach again)' : a.unchecked ? ' (not verified)' : ''}</span><button type="button" data-remove-file="${esc(a.id)}" aria-label="Remove ${esc(a.name)}">&times;</button></span>`).join('');
+  const hasDraft = !!($('#prompt').value || state.attachments.length || state.editing);
+  $('#draft-banner').hidden = !hasDraft && !state.retry && !state.missing;
+  $('#draft-label').textContent = state.retry ? 'Send status is unknown. Retry uses the same request ID.' : state.missing ? 'This conversation is unavailable. Your draft is kept at this address. Copy its text to a new chat.' : editTargetMissing() ? 'The edited message is unavailable. Copy this draft to a new chat or cancel the edit.' : state.editing ? 'Edit creates a new branch. The original stays saved.' : draftWarning ? 'Draft storage needs attention. Your input stays on this page.' : 'Draft saved only on this device.';
+  $('#cancel-edit').hidden = !!state.retry || !hasDraft;
+  $('#cancel-edit').textContent = state.editing ? 'Cancel edit' : 'Discard draft';
+  $('#cancel-edit').disabled = state.busy;
   $('#prompt').rows = Math.min(10, Math.max(2, $('#prompt').value.split('\n').length));
-  updateControls();
+  renderDraftStatus(); updateControls();
 }
 function updateControls() {
+  const unavailable = state.loading || state.missing || !!state.draftKey && state.conversation?.id !== state.draftKey;
   const running = !!state.conversation?.activeJob || state.conversation?.messages.some(m => m.status === 'streaming');
   $('#stop').hidden = !running;
   $('#stop').disabled = !state.conversation?.activeJob || state.busy;
   $('#send').hidden = running && !state.retry;
-  $('#send').disabled = state.busy || (!state.retry && (running || !selectedProvider() || !$('#model-input').value.trim() || (!$('#prompt').value.trim() && !state.attachments.length)));
+  $('#send').disabled = state.busy || state.loading || (!state.retry && (unavailable || editTargetMissing() || state.attachments.some(a => a.missing) || running || !selectedProvider() || !$('#model-input').value.trim() || (!$('#prompt').value.trim() && !state.attachments.length)));
   $('#send').innerHTML = `${state.retry ? 'Retry send' : 'Send'}${icon('send')}`;
   $('#new-chat').disabled = state.busy || !!state.retry;
-  $('#attach-button').disabled = state.busy || !!state.retry;
-  $('#prompt').disabled = !!state.retry;
-  $('#generation-button').disabled = state.busy || running;
+  $('#attach-button').disabled = state.busy || unavailable || !!state.retry;
+  $('#prompt').disabled = state.busy || !!state.retry;
+  $('#generation-button').disabled = state.busy || unavailable || !!state.retry || running;
 }
 function renderList() {
   const current = routeId();
@@ -198,38 +235,51 @@ function renderThread(forceBottom = false) {
   updateControls();
 }
 async function loadCurrent(forceBottom = false) {
-  const cid = routeId(); if (!cid) return;
-  const c = await api(`/api/conversations/${encodeURIComponent(cid)}`);
-  if (cid !== routeId()) return;
+  const cid = state.draftKey; if (!cid || cid !== routeId()) return;
+  let c;
+  try { c = await api(`/api/conversations/${encodeURIComponent(cid)}`); }
+  catch (e) {
+    if (e.status === 404 && cid === state.draftKey && cid === routeId()) {
+      state.conversation = null; state.missing = true; renderThread(); renderDraft();
+    }
+    throw e;
+  }
+  if (!state.authenticated || cid !== routeId() || cid !== state.draftKey) return;
   if (state.conversation?.id === cid && state.conversation.version > c.version) return;
-  state.conversation = c; renderThread(forceBottom); renderList();
+  state.conversation = c; state.missing = false; renderThread(forceBottom); renderList(); renderDraft();
 }
 async function navigate(cid, known = null) {
-  if (state.busy || state.retry) { toast('Finish the current submission before switching conversations.'); return; }
+  if (state.busy || state.retry && cid !== state.draftKey) {
+    history.replaceState(null, '', state.draftKey ? `#${encodeURIComponent(state.draftKey)}` : location.pathname);
+    toast('Finish the current submission before switching conversations.'); return;
+  }
   rememberDraft(); cancelDiagrams(); cancelPreviews();
   if (routeId() !== cid) history.pushState(null, '', cid ? `#${encodeURIComponent(cid)}` : location.pathname);
-  state.conversation = known; restoreDraft(cid); $('#app').classList.remove('sidebar-open');
+  if (state.draftKey !== cid) { state.conversation = known; restoreDraft(cid); }
+  state.loading = !!cid && !state.conversation;
+  $('#app').classList.remove('sidebar-open'); renderThread(true); updateControls();
   if (cid && !known) {
-    try { await loadCurrent(true); } catch (e) { toast(e.message); if (e.status === 404) { history.replaceState(null,'',location.pathname); state.conversation = null; renderThread(); } }
-  } else renderThread(true);
+    try { await loadCurrent(true); } catch (e) { if (cid === state.draftKey) toast(e.message); }
+  }
+  if (cid !== state.draftKey || !state.authenticated) return;
+  state.loading = false;
   if (state.conversation) {
     const last = [...pathMessages(state.conversation)].reverse().find(m => m.providerId && state.providers.some(p => p.id === m.providerId));
     if (last) { $('#provider-select').value = last.providerId; $('#model-input').value = last.model ?? ''; loadModels(false).catch(() => {}); }
   }
-  renderList(); updateControls(); $('#prompt').focus();
+  renderList(); updateControls(); $('#prompt').focus(); checkPending();
 }
 async function createConversation() {
+  const previousKey = state.draftKey;
+  if (previousKey !== null) throw new Error('Open New chat before creating a conversation. Your current draft was kept.');
   const c = await api('/api/conversations', 'POST', { title: 'New chat' });
-  history.pushState(null, '', `#${c.id}`); state.conversation = c; return c;
+  if (!state.authenticated || previousKey !== state.draftKey) throw new Error('The chat changed before creation completed. Your draft was kept.');
+  const draft = currentDraft();
+  // Save the destination before removing the new-chat slot. Never migrate on a refresh.
+  if (drafts.set(c.id, draft)) drafts.delete(previousKey, draft);
+  history.pushState(null, '', `#${c.id}`); state.conversation = c; state.draftKey = c.id; return c;
 }
-async function newChat() {
-  if (state.busy || state.retry) return;
-  rememberDraft(); cancelPreviews(); state.busy = true; updateControls();
-  try {
-    const c = await createConversation(); restoreDraft(c.id); renderThread(true); await refreshList();
-    $('#app').classList.remove('sidebar-open'); $('#prompt').focus();
-  } catch (e) { toast(e.message); } finally { state.busy = false; updateControls(); }
-}
+async function newChat() { await navigate(null); }
 async function refreshProviders() {
   const selected = $('#provider-select').value;
   state.providers = await api('/api/providers');
@@ -258,19 +308,22 @@ async function saveSelection() {
   try { state.preferences = await api('/api/preferences', 'PUT', { providerId: $('#provider-select').value, model: $('#model-input').value.trim() }); }
   catch (e) { toast(e.message); }
 }
-async function acknowledged(cid) {
-  const regenerate = state.retry?.body.regenerate === true;
+async function acknowledged(pending) {
+  if (state.retry !== pending) return;
+  const submitted = currentDraft();
   state.retry = null;
-  if (!regenerate) state.drafts.delete(cid);
-  if (!regenerate && state.conversation?.id === cid) { $('#prompt').value = ''; state.attachments = []; state.editing = null; renderDraft(); }
-  await loadCurrent(true); scheduleList();
+  if (!pending.body.regenerate && state.draftKey === pending.cid) {
+    drafts.delete(pending.cid, submitted);
+    $('#prompt').value = ''; state.attachments = []; state.editing = null;
+  } else rememberDraft();
+  renderDraft(); await loadCurrent(true); scheduleList();
 }
 async function checkPending() {
   if (!state.retry || pendingCheck) return;
   const pending = state.retry; pendingCheck = true;
   try {
     await api(`/api/requests/${encodeURIComponent(pending.body.requestId)}`);
-    if (state.retry === pending) await acknowledged(pending.cid);
+    if (state.retry === pending) await acknowledged(pending);
   } catch (e) { if (e.status !== 404 && e.status !== 0) toast(e.message); }
   finally { pendingCheck = false; }
 }
@@ -287,13 +340,14 @@ async function sendMessage(event) {
       pending = { cid: c.id, body: { requestId: uuid(), expectedVersion: c.version, providerId, model,
         parentId: state.editing ? state.editing.parentId : c.activeLeaf, content, attachments: attachmentIds, settings: c.settings } };
     }
-    state.retry = pending;
+    state.retry = pending; rememberDraft(); renderDraft();
     await api(`/api/conversations/${encodeURIComponent(pending.cid)}/generate`, 'POST', pending.body);
-    await acknowledged(pending.cid);
+    await acknowledged(pending);
     saveSelection();
   } catch (e) {
-    if (e.status !== 0) { state.retry = null; if (e.status === 409) await loadCurrent().catch(() => {}); }
+    if (e.status && e.status < 500) { state.retry = null; rememberDraft(); if (e.status === 409) await loadCurrent().catch(() => {}); }
     else checkPending();
+    if (!state.retry) validateAttachments();
     toast(e.message);
   } finally { state.busy = false; renderDraft(); }
 }
@@ -305,11 +359,12 @@ async function regenerate(messageId) {
   const pending = { cid: c.id, body: { requestId: uuid(), expectedVersion: c.version, providerId: $('#provider-select').value,
     model: $('#model-input').value.trim(), parentId: m.parentId, regenerate: true, settings: c.settings } };
   try {
-    state.retry = pending;
+    state.retry = pending; rememberDraft(); renderDraft();
     await api(`/api/conversations/${c.id}/generate`, 'POST', pending.body);
-    state.retry = null; await loadCurrent();
+    await acknowledged(pending);
   } catch (e) {
-    if (e.status !== 0) { state.retry = null; if (e.status === 409) await loadCurrent().catch(() => {}); }
+    if (e.status && e.status < 500) { state.retry = null; rememberDraft(); if (e.status === 409) await loadCurrent().catch(() => {}); }
+    else checkPending();
     toast(e.message);
   } finally { state.busy = false; renderDraft(); }
 }
@@ -328,12 +383,12 @@ async function selectBranch(messageId) {
   } catch (e) { toast(e.message); if (e.status === 409) await loadCurrent().catch(() => {}); }
 }
 function beginEdit(mid) {
-  if (state.busy || state.retry || state.conversation?.activeJob) return;
+  if (state.busy || state.retry || !state.conversation || state.conversation.activeJob) return;
   const m = state.conversation.messages.find(m => m.id === mid);
   if (!m) return;
   if (($('#prompt').value.trim() || state.attachments.length) && !confirm('Replace the unsent draft with this message?')) return;
   state.editing = { id: m.id, parentId: m.parentId }; $('#prompt').value = m.content;
-  state.attachments = m.attachments.map(a => ({ ...a, existing: true })); renderDraft(); rememberDraft(); $('#prompt').focus();
+  state.attachments = m.attachments.map(a => ({ ...a, existing: true })); rememberDraft(); renderDraft(); $('#prompt').focus();
 }
 async function copyMessage(mid) {
   const content = state.conversation?.messages.find(m => m.id === mid)?.content ?? '';
@@ -386,7 +441,8 @@ async function saveProvider(event) {
 }
 async function openGeneration() {
   if (!selectedProvider()) { openConnections(); return; }
-  if (state.conversation?.activeJob || state.busy) return;
+  if (state.conversation?.activeJob || state.busy || state.loading || state.missing || state.retry) return;
+  state.busy = true; updateControls();
   try {
     if (!state.conversation) { await createConversation(); renderThread(); scheduleList(); }
     const opts = state.conversation.settings, caps = selectedProvider().capabilities;
@@ -395,6 +451,7 @@ async function openGeneration() {
     for (const key of ['systemPrompt','temperature','topP','maxTokens']) $('#field-'+key).hidden = !caps[key];
     $('#generation-error').textContent = ''; $('#generation-dialog').showModal();
   } catch (e) { toast(e.message); }
+  finally { state.busy = false; renderDraft(); }
 }
 async function saveGeneration(event) {
   event.preventDefault(); const caps = selectedProvider()?.capabilities ?? {}, opts = {}, c = state.conversation;
@@ -414,7 +471,7 @@ async function readAsBase64(file) {
   });
 }
 async function uploadFiles(files) {
-  if (state.busy || state.retry) return;
+  if (state.busy || state.retry || state.loading || state.missing || !files.length) return;
   state.busy = true; updateControls();
   try {
     if (state.attachments.length + files.length > 10) throw new Error('Attach at most ten files to each message.');
@@ -424,7 +481,8 @@ async function uploadFiles(files) {
       const mime = file.type || 'text/plain';
       const data = await readAsBase64(file);
       const a = await api(`/api/conversations/${c.id}/attachments`, 'POST', { name: file.name, mime, data });
-      state.attachments.push(a); renderDraft(); rememberDraft();
+      if (!state.authenticated || state.draftKey !== c.id) return;
+      state.attachments.push(a); rememberDraft(); renderDraft();
     }
     scheduleList(); renderThread();
   } catch (e) { toast(e.message); }
@@ -464,9 +522,9 @@ function connectEvents() {
       } else if (change.type === 'providers') { await refreshProviders(); await loadModels(false); }
       else if (change.type === 'preferences') { const session = await api('/api/session'); state.preferences = session.settings; applyTheme(); }
       else if (change.type === 'deleted') {
-        if (change.conversationId === state.conversation?.id) {
-          rememberDraft(); cancelPreviews(); history.replaceState(null,'',location.pathname); state.conversation = null; restoreDraft(null); renderThread();
-          toast('This conversation was deleted on another device.');
+        if (change.conversationId === state.draftKey) {
+          cancelPreviews(); state.conversation = null; state.missing = true; renderThread(); renderDraft();
+          toast('This conversation was deleted on another device. Your draft is kept at this address.');
         }
         scheduleList();
       } else if (change.type === 'delta') {
@@ -491,7 +549,7 @@ async function boot() {
     applyTheme(); $('#login-screen').hidden = true; $('#app').hidden = false;
     $('#logout').hidden = session.authenticationRequired === false;
     await Promise.all([refreshList(), refreshProviders()]); await loadModels(false);
-    if (routeId()) await navigate(routeId()); else renderThread();
+    await navigate(routeId());
     connectEvents();
   } catch (e) { showLogin(); if (e.status !== 401) $('#login-error').textContent = e.message; }
 }
@@ -502,7 +560,7 @@ $('#login-form').addEventListener('submit', async event => {
   finally { $('#login-button').disabled = false; }
 });
 $('#composer').addEventListener('submit', sendMessage);
-$('#prompt').addEventListener('input', () => { renderDraft(); rememberDraft(); });
+$('#prompt').addEventListener('input', () => { rememberDraft(); renderDraft(); });
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendMessage(); } });
 $('#new-chat').addEventListener('click', newChat);
 $('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => refreshList().catch(e => toast(e.message)), 200); });
@@ -527,11 +585,18 @@ $('#theme-select').addEventListener('change', async () => {
   try { state.preferences = await api('/api/preferences','PUT',{ theme: $('#theme-select').value }); applyTheme(); }
   catch(e) { toast(e.message); }
 });
+function clearDraftView() {
+  state.conversation = null; state.attachments = []; state.editing = null; state.retry = null; state.draftKey = undefined;
+  state.loading = false; state.missing = false;
+  $('#prompt').value = ''; $('#thread').innerHTML = ''; $('#conversation-list').innerHTML = ''; showLogin();
+}
 $('#logout').addEventListener('click', async () => {
+  if (state.busy) { toast('Finish the current operation before signing out.'); return; }
+  if (!confirm('Sign out and discard all drafts saved in this browser for this server? This does not cancel submitted generations or delete uploaded files.')) return;
   try {
     await api('/api/logout','POST');
-    state.drafts.clear(); state.conversation = null; state.attachments = []; state.editing = null; state.retry = null;
-    $('#prompt').value = ''; $('#thread').innerHTML = ''; $('#conversation-list').innerHTML = ''; showLogin();
+    const cleared = drafts.clear(); clearDraftView();
+    if (!cleared) { $('#login-error').textContent = draftWarning; toast(draftWarning); }
   } catch(e) { toast(e.message); }
 });
 $('#attach-button').addEventListener('click', () => $('#file-input').click());
@@ -542,10 +607,23 @@ $('#composer').addEventListener('drop', event => { event.preventDefault(); uploa
 $('#attachment-list').addEventListener('click', async event => {
   const b = event.target.closest('[data-remove-file]'); if (!b || state.busy || state.retry) return;
   const a = state.attachments.find(a => a.id === b.dataset.removeFile);
-  try { if (!a.existing) await api(`/api/attachments/${a.id}`, 'DELETE'); state.attachments = state.attachments.filter(x => x.id !== a.id); renderDraft(); rememberDraft(); }
-  catch (e) { toast(e.message); }
+  if (!a) return;
+  state.busy = true; updateControls();
+  try {
+    if (!a.existing) {
+      try { await api(`/api/attachments/${encodeURIComponent(a.id)}`, 'DELETE'); }
+      // A missing upload or a file already attached by another tab can be unlinked.
+      catch (e) { if (e.status !== 404 && e.status !== 409) throw e; }
+    }
+    if (!state.authenticated) return;
+    state.attachments = state.attachments.filter(x => x.id !== a.id); rememberDraft();
+  } catch (e) { toast(e.message); }
+  finally { state.busy = false; renderDraft(); }
 });
-$('#cancel-edit').addEventListener('click', () => { state.editing = null; state.attachments = []; $('#prompt').value = ''; renderDraft(); rememberDraft(); });
+$('#cancel-edit').addEventListener('click', () => {
+  if (state.busy || state.retry || !confirm('Discard this unsent draft, including its edit and attachment references? Uploaded files stay on the server.')) return;
+  drafts.delete(state.draftKey, currentDraft()); state.editing = null; state.attachments = []; $('#prompt').value = ''; renderDraft();
+});
 $('#stop').addEventListener('click', async () => { try { if (state.conversation?.activeJob) await api(`/api/jobs/${state.conversation.activeJob.id}/cancel`, 'POST'); } catch (e) { toast(e.message); } });
 $('#thread').addEventListener('click', event => {
   const b = event.target.closest('button'); if (!b) return;
@@ -580,11 +658,13 @@ $('#rename-form').addEventListener('submit', async event => {
 });
 $('#export-conversation').addEventListener('click', () => { if (state.conversation) download(`/api/conversations/${state.conversation.id}/export`, 'conversation.common-chat.json'); });
 $('#delete-conversation').addEventListener('click', async () => {
-  const c = state.conversation; if (!c || !confirm('Permanently delete this conversation, all branches, and its attachments?')) return;
+  const c = state.conversation; if (!c || state.busy || state.retry || !confirm('Permanently delete this conversation, all branches, its attachments, and its draft on this device?')) return;
+  state.busy = true; updateControls();
   try {
     await api(`/api/conversations/${c.id}`, 'DELETE', { expectedVersion: c.version }); $('#conversation-dialog').close();
-    cancelPreviews(); state.drafts.delete(c.id); history.replaceState(null,'',location.pathname); state.conversation = null; restoreDraft(null); renderThread(); await refreshList();
+    cancelPreviews(); drafts.delete(c.id); history.replaceState(null,'',location.pathname); state.conversation = null; restoreDraft(null); renderThread(); await refreshList();
   } catch(e) { $('#conversation-error').textContent = e.message; if (e.status === 409) await loadCurrent().catch(() => {}); }
+  finally { state.busy = false; renderDraft(); }
 });
 $('#sidebar-toggle').addEventListener('click', () => $('#app').classList.toggle('sidebar-open'));
 $('#sidebar-backdrop').addEventListener('click', () => $('#app').classList.remove('sidebar-open'));
@@ -598,5 +678,11 @@ document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#app').classList.add('sidebar-open'); $('#search').focus(); }
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') { event.preventDefault(); newChat(); }
 });
-window.addEventListener('beforeunload', event => { if ($('#prompt').value.trim() || state.retry) { event.preventDefault(); event.returnValue = ''; } });
+window.addEventListener('storage', event => {
+  if (event.key === DRAFT_LOGOUT_KEY && event.newValue) { drafts.forget(); clearDraftView(); }
+});
+window.addEventListener('beforeunload', event => {
+  rememberDraft();
+  if (drafts.hasUnsaved || state.busy) { event.preventDefault(); event.returnValue = ''; }
+});
 boot();
