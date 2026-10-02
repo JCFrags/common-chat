@@ -15,3 +15,5 @@ __pycache__/
 *.sqlite-wal
 master.key
 server.lock
+dist/
+release.json

@@ -1,6 +1,6 @@
 {
   "name": "common-chat",
-  "version": "0.1.0",
+  "version": "0.2.0-preview.1",
   "private": true,
   "description": "A self-hosted chat server with shared history and OpenAI-compatible model connections.",
   "type": "module",
@@ -12,6 +12,7 @@
     "start": "node --env-file-if-exists=.env server/index.mjs",
     "test": "node --test --test-concurrency=1 tests/*.test.mjs",
     "check": "node scripts/check.mjs",
+    "release:pack": "node scripts/release-pack.mjs",
     "build:renderer": "node scripts/build-renderer.mjs",
     "demo": "node scripts/demo.mjs",
     "backup": "node scripts/backup.mjs",

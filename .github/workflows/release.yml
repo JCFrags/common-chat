@@ -1,0 +1,67 @@
+name: Preview-first release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example 0.2.0-preview.1 or 0.2.0
+        required: true
+        type: string
+      channel:
+        description: Stable promotion requires the same commit to pass the primary preview deployment.
+        required: true
+        default: preview
+        type: choice
+        options: [preview, stable]
+      preview_tag:
+        description: For stable, the published preview tag for this exact commit
+        type: string
+      primary_preview_verified:
+        description: I verified this exact commit in the primary preview installation, including data preservation and rollback.
+        type: boolean
+        default: false
+permissions:
+  contents: write
+concurrency:
+  group: common-chat-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ inputs.version }}
+      CHANNEL: ${{ inputs.channel }}
+      PREVIEW_TAG: ${{ inputs.preview_tag }}
+      VERIFIED: ${{ inputs.primary_preview_verified }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check promotion gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-z0-9.]+)?$ ]]
+          if [ "$CHANNEL" = stable ]; then
+            test "$VERIFIED" = true
+            [[ "$PREVIEW_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-[a-z0-9.]+$ ]]
+            test "$(gh release view "$PREVIEW_TAG" --json isPrerelease --jq .isPrerelease)" = true
+            test "$(git rev-parse "refs/tags/$PREVIEW_TAG^{commit}")" = "$GITHUB_SHA"
+          else
+            [[ "$VERSION" == *-* ]]
+          fi
+      - run: npm run check
+      - run: npm test
+      - name: Package accepted source
+        run: node scripts/release-pack.mjs "$VERSION" "$CHANNEL" dist
+      - name: Publish release
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=()
+          if [ "$CHANNEL" = preview ]; then flags+=(--prerelease --latest=false); else flags+=(--latest); fi
+          gh release create "v$VERSION" dist/* --target "$GITHUB_SHA" --title "Common Chat $VERSION" --generate-notes "${flags[@]}"

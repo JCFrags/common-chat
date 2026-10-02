@@ -133,7 +133,7 @@ function importAttachments(m, native, warnings) {
   }
   return { files, unsupported };
 }
-export function importConversations(store, input) {
+export function importConversations(store, input, { prepareAttachment } = {}) {
   const sessions = parseInput(input);
   if (!sessions.length || sessions.length > 1000) fail(400, 'Import between 1 and 1000 conversations.');
   const warnings = [], prepared = []; let count = 0;
@@ -153,7 +153,13 @@ export function importConversations(store, input) {
       const attachments = importAttachments(m, native, warnings);
       if (role === 'tool' || m.toolCalls) warnings.push('Imported tool records are preserved. This version does not continue branches with tool calls.');
       const timestamp = native ? m.createdAt : m.timestamp;
-      const metadata = native ? object(m.metadata ?? {}, 'metadata') : { source: m };
+      const metadata = native ? { ...object(m.metadata ?? {}, 'metadata') } : { source: m };
+      // Imported tool context is an archive, not local execution provenance or permission.
+      if (native && (metadata.toolTranscript || metadata.toolPermissions)) {
+        metadata.archivedToolContext = { transcript: metadata.toolTranscript ?? null, permissions: metadata.toolPermissions ?? null };
+        delete metadata.toolTranscript; delete metadata.toolPermissions;
+        warnings.push('Imported tool context is archived. It cannot grant permissions or resume tool execution.');
+      }
       if (attachments.unsupported.length) metadata.unsupportedAttachments = attachments.unsupported;
       return { id: mapping.get(m.id), conversationId: cid, parentId: mapping.get(native ? m.parentId : m.parent) ?? null,
         role, content, reasoning, status: native && ['complete','cancelled','interrupted','error'].includes(m.status) ? m.status : 'complete',
@@ -167,9 +173,10 @@ export function importConversations(store, input) {
       source: native ? conv.source ?? {} : conv,
       createdAt: native && Number.isSafeInteger(conv.createdAt) ? conv.createdAt : Math.min(now(), ...nodes.map(n => n.createdAt)) });
   }
-  const createdFiles = [];
-  try {
-    store.transaction(() => {
+  const commit = () => {
+    const createdFiles = [];
+    try {
+      store.transaction(() => {
       for (const c of prepared) {
         store.run('INSERT INTO conversations(id,title,created_at,updated_at,active_leaf,settings,source) VALUES(?,?,?,?,?,?,?)',
           c.cid, c.title, c.createdAt, now(), c.leaf, JSON.stringify(c.settings), JSON.stringify(c.source));
@@ -178,12 +185,19 @@ export function importConversations(store, input) {
           for (const f of m.files) createdFiles.push(store.addAttachment(c.cid, f, m.id).id);
         }
       }
-    });
-  } catch (e) {
-    for (const aid of createdFiles) { try { unlinkSync(join(store.files, aid)); } catch {} }
-    throw e;
-  }
-  return { conversationIds: prepared.map(c => c.cid), conversations: prepared.length, messages: count, warnings: [...new Set(warnings)] };
+      });
+    } catch (e) {
+      for (const aid of createdFiles) { try { unlinkSync(join(store.files, aid)); } catch {} }
+      throw e;
+    }
+    return { conversationIds: prepared.map(c => c.cid), conversations: prepared.length, messages: count, warnings: [...new Set(warnings)] };
+  };
+  if (prepareAttachment) return (async () => {
+    // Complete untrusted media inspection before opening the SQLite transaction.
+    for (const c of prepared) for (const m of c.nodes) for (const file of m.files) await prepareAttachment(file);
+    return commit();
+  })();
+  return commit();
 }
 export function exportConversations(store, cid = null) {
   const rows = cid ? [store.conversation(cid)] : store.all('SELECT * FROM conversations ORDER BY created_at');

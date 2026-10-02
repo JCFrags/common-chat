@@ -9,6 +9,13 @@ import { HttpError, fail, id, now, body, text, object, settings, providerConfig,
 import { listModels } from './provider.mjs';
 import { importConversations, exportConversations } from './transfer.mjs';
 import { sandboxPolicy, sandboxDocument } from './sandbox.mjs';
+import { Workspace } from './workspace.mjs';
+import { createWorkspaceHandler } from './workspace-routes.mjs';
+import { RunnerClient } from './runner-client.mjs';
+import { Executions } from './executions.mjs';
+import { Tools } from './tools.mjs';
+import { Media } from './media.mjs';
+import { release } from './release.mjs';
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), '../public');
 const assets = new Map([
@@ -17,6 +24,10 @@ const assets = new Map([
   ['/theme.css', ['theme.css', 'text/css; charset=utf-8']], ['/favicon.svg', ['favicon.svg', 'image/svg+xml']],
   ['/diagrams.js', ['diagrams.js', 'text/javascript; charset=utf-8']], ['/touch.js', ['touch.js', 'text/javascript; charset=utf-8']],
   ['/previews.js', ['previews.js', 'text/javascript; charset=utf-8']],
+  ['/workspace.js', ['workspace.js', 'text/javascript; charset=utf-8']],
+  ['/workspace.css', ['workspace.css', 'text/css; charset=utf-8']],
+  ['/media.js', ['media.js', 'text/javascript; charset=utf-8']],
+  ['/tool-controls.js', ['tool-controls.js', 'text/javascript; charset=utf-8']],
   ['/diagram-source.js', ['diagram-source.js', 'text/javascript; charset=utf-8']],
   ['/vendor/rich-text.js', ['vendor/rich-text.js', 'text/javascript; charset=utf-8']],
   ['/vendor/mermaid.js', ['vendor/mermaid.js', 'text/javascript; charset=utf-8']]
@@ -48,7 +59,14 @@ export async function createApp(options = {}) {
       subscriber.res.write(`data: ${JSON.stringify(event)}\n\n`);
     }
   };
-  const generations = new Generations(store, emit, options.generationOptions);
+  const socketPath = options.runnerSocket ?? process.env.CHAT_RUNNER_SOCKET;
+  const runner = options.runner ?? (socketPath ? new RunnerClient({ socketPath }) : null);
+  const workspace = new Workspace(store, { extractDocument: runner?.extractDocument.bind(runner) });
+  const handleWorkspace = createWorkspaceHandler(workspace);
+  const executions = new Executions(store, workspace, runner, emit, options.executionOptions);
+  const tools = new Tools(workspace, executions);
+  const media = new Media({ mediaProbe: runner?.mediaProbe.bind(runner), readAttachment: a => store.readAttachment(a) });
+  const generations = new Generations(store, emit, { ...options.generationOptions, tools, media });
   function originFor(req) {
     return publicUrl?.origin ?? `http://${req.headers.host}`;
   }
@@ -102,7 +120,7 @@ export async function createApp(options = {}) {
       }
       const tokenHash = trustedLocal ? null : auth.require(req);
       if (path === '/api/session' && method === 'GET') {
-        send(res, { authenticated: true, authenticationRequired: !trustedLocal, account: 'owner', settings: JSON.parse(store.get('SELECT settings FROM account WHERE id=1').settings), version: '0.1.0' }); return;
+        send(res, { authenticated: true, authenticationRequired: !trustedLocal, account: 'owner', settings: JSON.parse(store.get('SELECT settings FROM account WHERE id=1').settings), version: release.version, release }); return;
       }
       if (path === '/api/logout' && method === 'POST') {
         if (trustedLocal) { send(res, { authenticated: true }); return; }
@@ -165,13 +183,32 @@ export async function createApp(options = {}) {
         const input = await body(req, 128 * 1024), cid = store.createConversation(text(input.title ?? 'New chat', 'title', 500), settings(input.settings ?? {}));
         emit({ type: 'changed', conversationId: cid }); send(res, store.snapshot(cid), 201); return;
       }
+      if (path === '/api/runtime' && method === 'GET') { send(res, await executions.runtime()); return; }
+      const workspaceMatch = /^\/api\/conversations\/([^/]+)\/workspace(?:\/|$)/.exec(path);
+      if (await handleWorkspace({ req, res, url, method, send })) {
+        if (workspaceMatch && !['GET', 'HEAD'].includes(method)) emit({ type: 'changed', conversationId: decodeURIComponent(workspaceMatch[1]) });
+        return;
+      }
+      const executionMatch = /^\/api\/conversations\/([^/]+)\/(executions|packages)(?:\/([^/]+)(?:\/(cancel))?)?$/.exec(path);
+      if (executionMatch) {
+        const [, cid, action, executionId, cancel] = executionMatch;
+        if (action === 'packages' && !executionId && method === 'GET') { send(res, executions.getPackages(cid)); return; }
+        if (action === 'packages' && !executionId && method === 'POST') { send(res, await executions.setPackages(cid, await body(req, 16384))); return; }
+        if (action === 'executions') {
+          if (!executionId && method === 'GET') { send(res, executions.list(cid)); return; }
+          if (!executionId && method === 'POST') { send(res, await executions.submit(cid, await body(req, 256 * 1024)), 202); return; }
+          if (executionId && !cancel && method === 'GET') { send(res, executions.get(cid, executionId)); return; }
+          if (executionId && cancel && method === 'POST') { send(res, executions.cancel(cid, executionId)); return; }
+        }
+        fail(404, 'Execution route not found.');
+      }
       const conversationMatch = /^\/api\/conversations\/([^/]+)(?:\/(generate|attachments|export))?$/.exec(path);
       if (conversationMatch) {
         const [, cid, action] = conversationMatch;
         if (!action && method === 'GET') { send(res, store.snapshot(cid)); return; }
         if (!action && method === 'PATCH') {
           const input = await body(req, 128 * 1024), c = store.conversation(cid);
-          store.assertVersion(c, input.expectedVersion); store.assertIdle(cid);
+          store.assertVersion(c, input.expectedVersion); store.assertIdle(cid); executions.assertIdle(cid);
           const title = input.title === undefined ? c.title : text(input.title, 'title', 500);
           let leaf = input.activeLeaf === undefined ? c.active_leaf : input.activeLeaf;
           if (leaf !== null) { text(leaf, 'activeLeaf', 100); store.path(cid, leaf); }
@@ -181,15 +218,20 @@ export async function createApp(options = {}) {
         }
         if (!action && method === 'DELETE') {
           const input = await body(req, 4096), c = store.conversation(cid);
-          store.assertVersion(c, input.expectedVersion); store.assertIdle(cid); store.deleteConversation(cid);
+          store.assertVersion(c, input.expectedVersion); store.assertIdle(cid); executions.assertIdle(cid);
+          workspace.deleteConversation(cid); store.deleteConversation(cid);
           emit({ type: 'deleted', conversationId: cid }); send(res, { deleted: true }); return;
         }
-        if (action === 'generate' && method === 'POST') { send(res, generations.submit(cid, await body(req, 2 * 1024 * 1024)), 202); return; }
+        if (action === 'generate' && method === 'POST') { send(res, await generations.submit(cid, await body(req, 2 * 1024 * 1024)), 202); return; }
         if (action === 'attachments' && method === 'POST') {
           store.conversation(cid);
           const pending = store.get('SELECT count(*) AS n FROM attachments WHERE conversation_id=? AND message_id IS NULL', cid).n;
           if (pending >= 100) fail(400, 'This conversation has too many unattached files. Remove unused files before upload.');
-          send(res, store.addAttachment(cid, attachmentData(await body(req, 15 * 1024 * 1024))), 201); return;
+          const file = attachmentData(await body(req, 15 * 1024 * 1024));
+          await media.prepareAttachment(file);
+          store.conversation(cid);
+          if (store.get('SELECT count(*) AS n FROM attachments WHERE conversation_id=? AND message_id IS NULL', cid).n >= 100) fail(400, 'This conversation has too many unattached files.');
+          send(res, store.addAttachment(cid, file), 201); return;
         }
         if (action === 'export' && method === 'GET') {
           res.setHeader('Content-Disposition', 'attachment; filename="conversation.common-chat.json"');
@@ -200,8 +242,9 @@ export async function createApp(options = {}) {
       if (fileMatch && method === 'GET') {
         const a = store.get('SELECT * FROM attachments WHERE id=?', fileMatch[1]);
         if (!a) fail(404, 'Attachment not found.');
-        res.setHeader('Content-Type', a.kind === 'image' ? a.mime : 'text/plain; charset=utf-8');
-        res.setHeader('Content-Disposition', `${a.kind === 'image' ? 'inline' : 'attachment'}; filename="attachment"; filename*=UTF-8''${encodeURIComponent(a.name).replace(/'/g, '%27')}`);
+        const inline = ['image', 'audio', 'video'].includes(a.kind);
+        res.setHeader('Content-Type', inline ? a.mime : 'text/plain; charset=utf-8');
+        res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="attachment"; filename*=UTF-8''${encodeURIComponent(a.name).replace(/'/g, '%27')}`);
         res.end(store.readAttachment(a)); return;
       }
       if (fileMatch && method === 'DELETE') {
@@ -226,7 +269,7 @@ export async function createApp(options = {}) {
         if (!job) fail(404, 'Generation not found.'); send(res, job); return;
       }
       if (path === '/api/import' && method === 'POST') {
-        const result = importConversations(store, await body(req)); emit({ type: 'changed' }); send(res, result, 201); return;
+        const result = await importConversations(store, await body(req), { prepareAttachment: file => media.prepareAttachment(file) }); emit({ type: 'changed' }); send(res, result, 201); return;
       }
       if (path === '/api/export' && method === 'GET') {
         res.setHeader('Content-Disposition', 'attachment; filename="common-chat-export.json"'); send(res, exportConversations(store)); return;
@@ -242,7 +285,7 @@ export async function createApp(options = {}) {
   server.requestTimeout = 30000; server.headersTimeout = 15000; server.maxHeadersCount = 50;
   let stopped = false;
   return {
-    server, store, auth, generations, bootstrapPassword,
+    server, store, auth, generations, workspace, executions, bootstrapPassword,
     async listen(port = 3000, host = '127.0.0.1') {
       if (trustedLocal && !['127.0.0.1', 'localhost', '::1'].includes(host)) throw new Error('Trusted-local access must listen on loopback only.');
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
@@ -252,6 +295,7 @@ export async function createApp(options = {}) {
     async close() {
       if (stopped) return; stopped = true;
       await generations.stop();
+      await executions.stop();
       for (const subscriber of subscribers) subscriber.res.end(); subscribers.clear();
       await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
       store.close();
