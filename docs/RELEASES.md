@@ -14,7 +14,7 @@ npm test
 npm run release:pack -- 0.2.0-preview.1 preview dist
 ```
 
-The command packages tracked source only and normalizes archive ownership to numeric UID/GID 0 without local account names. It adds `release.json` with version, channel, full commit, and build time. It writes a `.tar.gz`, a SHA-256 file, and a JSON manifest. It refuses to overwrite the archive or package a dirty checkout. Do not put data, environment files, credentials, or logs in Git. Screen the actual outgoing archive and release text before publication.
+The command packages tracked source only and normalizes archive ownership to numeric UID/GID 0 without local account names. Directories and executable files use mode `0755`; other files use `0644`, independent of the builder's umask. Private data is never part of this archive. It adds `release.json` with version, channel, full commit, and build time. It writes a `.tar.gz`, a SHA-256 file, and a JSON manifest. It refuses to overwrite the archive or package a dirty checkout. Do not put data, environment files, credentials, or logs in Git. Screen the actual outgoing archive and release text before publication.
 
 The authenticated `GET /api/session` response and Settings show the loaded release version, channel, and commit. A source checkout without the generated manifest reports `development`. `CHAT_UPDATE_CHANNEL=preview` or `stable` can override the policy label, but cannot change the manifest's source commit or install another release.
 

@@ -24,7 +24,7 @@ try {
   execFileSync('tar', ['-xf', archive, '-C', temporary]);
   const release = { version, channel, commit, builtAt: new Date().toISOString() };
   writeFileSync(join(temporary, 'common-chat', 'release.json'), `${JSON.stringify(release, null, 2)}\n`);
-  execFileSync('tar', ['--owner=0', '--group=0', '--numeric-owner', '-czf', target, '-C', temporary, 'common-chat']);
+  execFileSync('tar', ['--owner=0', '--group=0', '--numeric-owner', '--mode=u=rwX,go=rX', '-czf', target, '-C', temporary, 'common-chat']);
   const sha256 = createHash('sha256').update(readFileSync(target)).digest('hex');
   writeFileSync(`${target}.sha256`, `${sha256}  ${name}\n`, { flag: 'wx' });
   writeFileSync(`${target}.json`, `${JSON.stringify({ ...release, archive: name, sha256 }, null, 2)}\n`, { flag: 'wx' });
