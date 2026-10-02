@@ -10,6 +10,8 @@ Run the broker as a dedicated unprivileged account, not the chat account. Chat k
 
 Each operation creates one short-lived container with a fixed image ID, non-root UID, private PID/IPC namespaces, read-only root, no capabilities, default seccomp, and no-new-privileges. Networking stays `none`, including during package installation. The worker uses bounded tmpfs storage. Files return as bounded regular-file bytes, not an archive extracted on the host. Symlinks, hard links, special files, traversal, and oversized outputs are rejected.
 
+Workers explicitly use `--userns host` with `--user 1000:1000`. In rootless Podman, `host` selects Podman's rootless user namespace, not the machine's initial user namespace. UID/GID 0 map to the broker account, while UID/GID 1000 use subordinate host IDs. No host files are bind-mounted, so `keep-id` is unnecessary. This mapping avoids the extra image ownership copies that `keep-id` can require when storage does not support ID shifting. The initialization check that rejects rootful Podman is mandatory.
+
 The broker checks rootless Podman, cgroup v2 delegation, seccomp, and the worker protocol label before reporting ready. Each worker must then prove its effective UID, PID namespace, capability set, seccomp, no-new-privileges, CPU, memory, swap, and PID limits. A failed check stops the container before receiving code or input files. Rootless containers still share the host kernel. This is not a hostile multi-tenant VM service or an independent security audit.
 
 | Bound | Value |

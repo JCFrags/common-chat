@@ -47,7 +47,7 @@ export class PodmanEngine {
     const tmpfs = (path, size, executable = false) => ['--tmpfs', `${path}:rw,${executable ? 'exec' : 'noexec'},nosuid,nodev,size=${size},mode=1777`];
     const args = ['run', '--name', name, '--pull', 'never', '-i', '--log-driver', 'none',
       '--label', `${label}=${this.owner}`, '--label', `org.common-chat.runner.operation=${operationId}`,
-      '--userns', 'keep-id:uid=1000,gid=1000', '--user', '1000:1000', '--hostname', 'worker',
+      '--userns', 'host', '--user', '1000:1000', '--hostname', 'worker',
       '--network', 'none', '--no-hosts', '--ipc', 'private', '--read-only', '--read-only-tmpfs=false',
       '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--cpus', '1',
       '--memory', String(limits.memoryBytes), '--memory-swap', String(limits.memoryBytes), '--pids-limit', String(limits.pids),
@@ -76,7 +76,7 @@ class Worker {
     proc.stdout.setEncoding('utf8');
     proc.stdout.on('data', chunk => {
       this.bytes += Buffer.byteLength(chunk); this.buffer += chunk;
-      if (this.bytes > 96 * 1024 * 1024 || this.buffer.length > 16 * 1024 * 1024) { this.fail(new Error('Worker protocol output exceeded its bound.')); void this.stop(); return; }
+      if (this.bytes > 96 * 1024 * 1024 || this.buffer.length > 16 * 1024 * 1024) { this.fail(new Error('Worker protocol output exceeded its bound.')); void this.stop().catch(() => {}); return; }
       let index;
       while ((index = this.buffer.indexOf('\n')) >= 0) {
         const line = this.buffer.slice(0, index); this.buffer = this.buffer.slice(index + 1);
@@ -87,7 +87,7 @@ class Worker {
           if (!pending) throw new Error('Unexpected worker response.');
           this.pending.delete(response.id); clearTimeout(pending.timer);
           response.ok ? pending.resolve(response.value) : pending.reject(new Error(String(response.error).slice(0, 2500)));
-        } catch (error) { this.fail(error); void this.stop(); }
+        } catch (error) { this.fail(error); void this.stop().catch(() => {}); }
       }
     });
     proc.on('error', error => this.fail(error));
@@ -127,13 +127,14 @@ class Worker {
     if (this.failure || this.closed) return Promise.reject(this.failure ?? new Error('Worker is closed.'));
     const id = randomUUID();
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Worker operation timed out.')); void this.stop(); }, timeout);
+      const timer = setTimeout(() => { this.pending.delete(id); reject(new Error('Worker operation timed out.')); void this.stop().catch(() => {}); }, timeout);
       this.pending.set(id, { resolve, reject, timer });
       this.proc.stdin.write(JSON.stringify({ ...message, id }) + '\n');
     });
   }
   async stop() {
     if (this.stopping) return this.stopping;
+    // Keep the cached rejection: detached callbacks handle it, but awaited cleanup must still fail.
     this.stopping = (async () => {
       this.fail(new Error('Worker stopped.'));
       this.registry?.close(); this.registry = null;
