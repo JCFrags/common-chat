@@ -1,4 +1,5 @@
 import { markdown } from './markdown.js';
+import { filePresentation, presentationIcon } from './tool-presentation.js';
 
 const MiB = 1024 * 1024;
 const PREVIEW_CHARS = 128 * 1024, CONSOLE_CHARS = 64 * 1024, PASSAGES_PER_PAGE = 25;
@@ -11,6 +12,11 @@ const node = (tag, className = '', text) => {
   if (text !== undefined) element.textContent = String(text);
   return element;
 };
+function iconAction(element, label, icon) {
+  element.innerHTML = presentationIcon(icon);
+  element.classList.add('ghost', 'workspace-icon-button');
+  element.title = label; element.setAttribute('aria-label', label);
+}
 const bytesLabel = bytes => Number.isFinite(bytes) ? bytes < 1024 ? `${bytes} B` : bytes < MiB ? `${(bytes / 1024).toFixed(1)} KiB` : `${(bytes / MiB).toFixed(1)} MiB` : 'Size unavailable';
 const revisionLabel = file => Number.isSafeInteger(file?.version) ? `Revision ${file.version}` : `Revision ${String(file?.revision ?? '').slice(0, 8)}`;
 const dateLabel = value => { const date = new Date(value); return Number.isFinite(date.getTime()) ? date.toLocaleString() : ''; };
@@ -46,16 +52,16 @@ function base64(file) {
 
 /** Install once after the app DOM exists. Drafts remain in this page, not storage. */
 export function installWorkspace({ api, getConversation, ensureConversation, onChanged = () => {}, toast = () => {} }) {
-  const toolbar = document.querySelector('#topbar .toolbar');
-  if (!toolbar) throw new Error('The workspace needs the topbar toolbar.');
+  const launchTarget = document.querySelector('#workspace-slot') ?? document.querySelector('#topbar .toolbar');
+  if (!launchTarget) throw new Error('The workspace needs the sidebar workspace slot or topbar toolbar.');
   if (document.getElementById('workspace-dialog')) throw new Error('The workspace is already installed.');
   const sessions = new Map(), previewUrls = new Set();
   const releasePreview = () => { for (const url of previewUrls) URL.revokeObjectURL(url); previewUrls.clear(); };
   let current = null, opening = false, counter = 0, activeSection = 'files', runtime = null, runtimeError = '', runtimeRequest = null, pollTimer, pollRequest = null;
-  const launch = node('button', 'ghost workspace-launch', 'Files');
-  launch.type = 'button'; launch.id = 'workspace-button'; launch.title = 'Files and code execution';
+  const launch = node('button', 'ghost workspace-launch');
+  launch.type = 'button'; launch.id = 'workspace-button'; iconAction(launch, 'Files and code', 'files');
   launch.setAttribute('aria-haspopup', 'dialog'); launch.setAttribute('aria-controls', 'workspace-dialog');
-  toolbar.prepend(launch);
+  launchTarget.prepend(launch);
   const dialog = node('dialog', 'workspace-dialog'); dialog.id = 'workspace-dialog';
   dialog.setAttribute('aria-labelledby', 'workspace-title');
   // This template contains only fixed UI text. File and execution content use text nodes.
@@ -70,35 +76,36 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
         <div class="workspace-actions"><button type="button" id="workspace-new">New file</button><button type="button" id="workspace-upload">Upload</button><button type="button" class="ghost" id="workspace-refresh">Refresh</button></div>
         <input id="workspace-upload-input" type="file" multiple hidden>
         <form id="workspace-search-form" class="workspace-search"><label class="workspace-sr-only" for="workspace-search">Search file contents</label><input id="workspace-search" type="search" placeholder="Search file contents" maxlength="500"><button type="submit">Search</button><button type="button" class="ghost" id="workspace-clear-search" hidden>Clear</button></form>
-        <p class="small workspace-list-status" id="workspace-list-status" role="status"></p><div id="workspace-file-list"></div><p class="small" id="workspace-usage"></p>
+        <p class="small workspace-list-status" id="workspace-list-status" role="status"></p><div id="workspace-file-list"></div><details class="workspace-help"><summary>Storage details</summary><p class="small" id="workspace-usage"></p></details>
       </aside><section class="workspace-detail" aria-label="Selected file">
         <p class="muted" id="workspace-empty">Select a file, upload files, or create a text file.</p>
         <div id="workspace-file" hidden>
           <label class="field" id="workspace-path-field">File path<input id="workspace-path" placeholder="notes/summary.md" autocomplete="off" spellcheck="false"></label>
-          <h3 id="workspace-file-title"></h3><p class="small workspace-meta" id="workspace-file-meta"></p>
-          <div class="workspace-actions"><button type="button" class="primary" id="workspace-save">Save</button><a id="workspace-download" class="file-link">Download</a><button type="button" id="workspace-reload">Reload file</button><button type="button" class="ghost danger" id="workspace-delete">Delete</button><button type="button" class="ghost" id="workspace-discard">Discard draft</button></div>
+          <h3 id="workspace-file-title"></h3><details class="workspace-help workspace-file-details"><summary id="workspace-file-type">File details</summary><p class="small workspace-meta" id="workspace-file-meta"></p></details>
+          <div class="workspace-actions"><button type="button" class="ghost" id="workspace-save">Save</button><a id="workspace-download" class="file-link">Download</a><button type="button" id="workspace-reload">Reload file</button><button type="button" class="ghost danger" id="workspace-delete">Delete</button><button type="button" class="ghost" id="workspace-discard">Discard draft</button></div>
           <p id="workspace-file-notice" class="small" role="status"></p><p id="workspace-file-error" class="error" role="alert" hidden></p>
           <div class="workspace-tabs workspace-view-tabs" role="tablist" aria-label="File view">
             <button type="button" role="tab" id="workspace-edit-tab" aria-controls="workspace-edit-panel" aria-selected="true">Edit</button>
             <button type="button" role="tab" id="workspace-preview-tab" aria-controls="workspace-preview-panel" aria-selected="false" tabindex="-1">Preview</button>
             <button type="button" role="tab" id="workspace-history-tab" aria-controls="workspace-history-panel" aria-selected="false" tabindex="-1">Revisions</button>
           </div>
-          <section role="tabpanel" id="workspace-edit-panel" aria-labelledby="workspace-edit-tab"><label class="workspace-sr-only" for="workspace-editor">File text</label><textarea id="workspace-editor" rows="16" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea><p class="small">Ctrl+S or Command+S saves. Unsaved drafts stay in this tab when you close the panel or switch chats. Reloading the page can lose them.</p></section>
+          <section role="tabpanel" id="workspace-edit-panel" aria-labelledby="workspace-edit-tab"><label class="workspace-sr-only" for="workspace-editor">File text</label><textarea id="workspace-editor" rows="16" spellcheck="false" autocapitalize="off" autocomplete="off"></textarea><p class="small">Unsaved drafts stay in this tab when you close the panel or switch chats. Reloading the page can lose them.</p><details class="workspace-help"><summary>Editor help</summary><p class="small">Ctrl+S or Command+S saves the selected file.</p></details></section>
           <section role="tabpanel" id="workspace-preview-panel" aria-labelledby="workspace-preview-tab" hidden><div id="workspace-preview" class="workspace-preview"></div></section>
           <section role="tabpanel" id="workspace-history-panel" aria-labelledby="workspace-history-tab" hidden><p class="small">Restore creates a new revision. Earlier revisions remain available.</p><div id="workspace-history"></div></section>
         </div>
       </section></div>
     </section>
     <section id="workspace-run-panel" role="tabpanel" aria-labelledby="workspace-run-tab" hidden>
-      <p class="small">Code runs on the configured server runner and can change this conversation's files. Review it before running. Closing this panel does not stop a server job.</p>
-      <div class="workspace-actions"><p id="workspace-runtime-status" class="small" role="status"></p><button type="button" class="ghost" id="workspace-runtime-refresh">Check runner</button></div><dl id="workspace-runtime-limits" class="workspace-limits"></dl>
+      <p class="small workspace-safety">Code runs on the configured server runner and can change this conversation's files. Review the code before Run. Closing this panel does not stop a server job.</p>
+      <div class="workspace-actions"><p id="workspace-runtime-status" class="small" role="status"></p><button type="button" class="ghost" id="workspace-runtime-refresh">Check runner</button></div>
+      <p class="small workspace-safety">Execution is offline. Package access is registry-only. These manual settings do not change automatic model tool access.</p>
       <div class="workspace-run-controls"><label class="field">Language<select id="workspace-language"><option value="python">Python</option><option value="shell">Shell</option></select></label><label class="check"><input type="checkbox" id="workspace-allow-packages">Allow package downloads from approved registries for this run</label></div>
-      <p class="small">Each run uses a fresh copied workspace, not a live shared filesystem. Only successful changed outputs become revisions. Python uses headless Agg: save plots and animations to files instead of plt.show(). Package access is registry-only. Execution is offline. These controls do not grant model tools.</p><details><summary>Verified bundled libraries</summary><p id="workspace-inventory" class="small"></p></details>
+      <details class="workspace-help"><summary>Runner details and bundled libraries</summary><p class="small">Each run uses a fresh copied workspace, not a live shared filesystem. Only successful changed outputs become revisions. Python uses headless Agg: save plots and animations to files instead of plt.show().</p><dl id="workspace-runtime-limits" class="workspace-limits"></dl><p id="workspace-inventory" class="small"></p></details>
       <label class="field">Code<textarea id="workspace-code" rows="12" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Enter code to run"></textarea></label>
-      <div class="workspace-actions workspace-run-actions"><button type="button" class="primary" id="workspace-run">Run</button><button type="button" id="workspace-stop" disabled>Stop</button><button type="button" class="ghost" id="workspace-recent">Recent runs</button><span id="workspace-job-status" class="small" role="status"></span></div>
+      <div class="workspace-actions workspace-run-actions"><button type="button" class="ghost" id="workspace-run">Run</button><button type="button" id="workspace-stop" disabled>Stop</button><button type="button" class="ghost" id="workspace-recent">Recent runs</button><span id="workspace-job-status" class="small" role="status"></span></div>
       <p id="workspace-run-error" class="error" role="alert" hidden></p><div id="workspace-recent-list"></div>
-      <div id="workspace-job" hidden><h3>Console</h3><pre id="workspace-console" class="workspace-console" tabindex="0" aria-label="Execution console"></pre><p id="workspace-console-note" class="small"></p><div class="workspace-actions"><button type="button" id="workspace-console-previous">Previous console page</button><button type="button" id="workspace-console-next">Next console page</button><button type="button" id="workspace-console-download">Download full console</button></div><h3 id="workspace-output-title" hidden>Created or changed files</h3><div id="workspace-output-files" class="file-links"></div><p id="workspace-available-note" class="small"></p></div>
-      <details id="workspace-packages"><summary>Conversation packages</summary><p class="small">Use package names, optionally with exact versions. One package per line. Python uses name==version. npm uses name@version. URLs, paths, flags, and version ranges are not allowed. Validation can take up to five minutes. You can keep editing while it runs.</p>
+      <div id="workspace-job" hidden><details class="workspace-help"><summary>Run details</summary><p id="workspace-job-details" class="small"></p></details><h3>Console</h3><pre id="workspace-console" class="workspace-console" tabindex="0" aria-label="Execution console"></pre><p id="workspace-console-note" class="small"></p><div class="workspace-actions"><button type="button" id="workspace-console-previous">Previous console page</button><button type="button" id="workspace-console-next">Next console page</button><button type="button" id="workspace-console-download">Download full console</button></div><h3 id="workspace-output-title" hidden>Created or changed files</h3><div id="workspace-output-files" class="workspace-output-list"></div><p id="workspace-available-note" class="small"></p></div>
+      <details id="workspace-packages"><summary>Conversation packages</summary><p class="small workspace-safety">Registry packages only. Validation replaces the saved package list. URLs, paths, flags, and version ranges are not allowed.</p><details class="workspace-help"><summary>Package formats and validation</summary><p class="small">Use package names, optionally with exact versions. One package per line. Python uses name==version. npm uses name@version. Validation can take up to five minutes. You can keep editing while it runs.</p></details>
         <div class="workspace-package-grid"><label class="field">Python packages<textarea id="workspace-pip" rows="3" spellcheck="false" placeholder="Package names"></textarea></label><label class="field">npm packages<textarea id="workspace-npm" rows="3" spellcheck="false" placeholder="Package names"></textarea></label></div>
         <label class="check"><input type="checkbox" id="workspace-package-consent">Allow these packages to be downloaded from approved registries</label>
         <div class="workspace-actions"><button type="button" id="workspace-package-load">Load saved list</button><button type="button" id="workspace-package-save">Validate and save packages</button></div><p id="workspace-package-status" class="small" role="status"></p><p id="workspace-package-error" class="error" role="alert" hidden></p>
@@ -106,6 +113,15 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     </section>`;
   document.body.append(dialog);
   const field = name => dialog.querySelector(`#workspace-${name}`);
+  for (const [name, label, icon] of [
+    ['close', 'Close files and code', 'close'], ['new', 'New file', 'plus'], ['upload', 'Upload files', 'upload'], ['refresh', 'Refresh file list', 'refresh'],
+    ['clear-search', 'Clear file search', 'close'], ['save', 'Save file', 'save'], ['download', 'Download saved revision', 'download'],
+    ['reload', 'Reload current file', 'refresh'], ['delete', 'Delete file', 'trash'], ['discard', 'Discard unsaved draft', 'undo'],
+    ['runtime-refresh', 'Check runner', 'refresh'], ['stop', 'Stop run', 'stop'], ['recent', 'Recent runs', 'history'],
+    ['console-previous', 'Previous console page', 'previous'], ['console-next', 'Next console page', 'next'], ['console-download', 'Download full console', 'download'],
+    ['package-load', 'Load saved package list', 'refresh']
+  ]) iconAction(field(name), label, icon);
+  iconAction(field('search-form').querySelector('[type=submit]'), 'Search file contents', 'search');
   const selected = context => context?.drafts.get(context.selected);
   const dirty = draft => draft?.isNew || draft?.text !== draft?.baseText;
   const visible = context => dialog.open && current === context;
@@ -113,8 +129,10 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
   const workspace = context => `${prefix(context)}/workspace`;
   const queryFor = (path, revision) => new URLSearchParams({ path, ...(revision ? { revision } : {}) });
   const downloadUrl = (context, file) => `${workspace(context)}/download?${queryFor(file.path, file.revision)}`;
-  function action(label, handler, className = '') {
-    const button = node('button', className, label); button.type = 'button'; button.addEventListener('click', handler); return button;
+  function action(label, handler, className = '', icon) {
+    const button = node('button', className, label); button.type = 'button';
+    if (icon) iconAction(button, label, icon);
+    button.addEventListener('click', handler); return button;
   }
   function errorText(target, message = '') { target.textContent = message; target.hidden = !message; }
   function newContext(conversation) {
@@ -178,12 +196,16 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     field('usage').textContent = context?.usage ? `${bytesLabel(context.usage.bytes)} retained across ${context.usage.revisions} revisions. Deleted files retain their history.` : '';
     if (!context) return;
     const local = [...context.drafts.values()].filter(draft => draft.isNew);
-    function fileButton(label, key, detail, handler) {
-      const button = action('', handler, 'workspace-file-item'); button.dataset.workspaceKey = key;
+    function fileButton(label, key, detail, handler, file = { path: label }, notice = '') {
+      const { type, icon } = filePresentation(file), button = action('', handler, 'workspace-file-item'); button.dataset.workspaceKey = key;
       if (context.selected === key) button.setAttribute('aria-current', 'true');
-      button.append(node('span', 'workspace-file-name', label), node('small', '', detail)); root.append(button);
+      button.title = [label, file.mime, detail].filter(Boolean).join('\n');
+      button.setAttribute('aria-label', `${label}, ${type}${notice ? `, ${notice}` : ''}`);
+      const mark = node('span', `workspace-file-icon workspace-file-${icon}`); mark.innerHTML = presentationIcon(icon);
+      const text = node('span', 'workspace-file-label'); text.append(node('span', 'workspace-file-name', label), node('small', '', [type, notice].filter(Boolean).join(' · ')));
+      button.append(mark, text); root.append(button);
     }
-    for (const draft of local) fileButton(draft.path || 'Untitled file', draft.key, 'Unsaved new file', () => { context.selected = draft.key; renderList(); renderFile(); });
+    for (const draft of local) fileButton(draft.path || 'Untitled file', draft.key, 'Unsaved new file', () => { context.selected = draft.key; renderList(); renderFile(); }, { path: draft.path, mime: 'text/plain' }, 'Unsaved new file');
     if (context.results) {
       for (const [index, result] of context.results.entries()) {
         const item = node('article', 'workspace-search-result'), place = result.citation ?? {};
@@ -196,7 +218,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     } else {
       for (const file of context.files) {
         const draft = context.drafts.get(file.path);
-        fileButton(file.path, file.path, [file.deleted ? 'Deleted' : bytesLabel(file.size), revisionLabel(file), dirty(draft) ? 'Unsaved draft' : ''].filter(Boolean).join(' · '), () => openPath(context, file.path));
+        fileButton(file.path, file.path, `${bytesLabel(file.size)} · ${revisionLabel(file)}`, () => openPath(context, file.path), file, [file.deleted ? 'Deleted' : '', dirty(draft) ? 'Unsaved draft' : ''].filter(Boolean).join(' · '));
       }
       if (context.listReady && !context.files.length && !local.length) root.append(node('p', 'small', 'No files yet. Upload documents or create a text file.'));
     }
@@ -212,12 +234,13 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     if (!preserveInput && field('editor').value !== draft.text) field('editor').value = draft.text;
     const editable = draft.isNew || draft.file.text === true && typeof draft.content?.text === 'string' && !draft.file.deleted;
     const stale = context.files.find(file => file.path === draft.path)?.revision;
+    field('file-type').textContent = `${filePresentation(draft.isNew ? { path: draft.path, mime: 'text/plain' } : draft.file).type}${draft.file.deleted ? ' · Deleted' : ''} · file details`;
     field('file-meta').textContent = draft.isNew ? 'New UTF-8 text file' : `${revisionLabel(draft.file)} · ${bytesLabel(draft.file.size)} · ${draft.file.mime}${draft.file.deleted ? ' · Deleted' : ''}`;
     field('file-notice').textContent = [dirty(draft) ? 'Unsaved changes.' : '', stale && stale !== draft.file.revision ? 'The server has a newer revision. Reload before saving. Your draft is kept until you confirm.' : '', draft.notice].filter(Boolean).join(' ');
     errorText(field('file-error'), draft.error);
     field('path').disabled = draft.busy || context.busy; field('editor').readOnly = draft.locked || !editable;
     field('save').hidden = !editable; field('save').disabled = draft.busy || context.busy || !dirty(draft) || draft.conflict;
-    field('save').textContent = draft.busy && !draft.locked ? 'Saving…' : 'Save';
+    iconAction(field('save'), draft.busy && !draft.locked ? 'Saving file…' : 'Save file', 'save');
     field('reload').hidden = draft.isNew; field('reload').disabled = draft.busy || context.busy;
     field('delete').hidden = draft.isNew || draft.file.deleted; field('delete').disabled = draft.busy || context.busy;
     field('discard').hidden = !dirty(draft); field('discard').disabled = draft.busy || context.busy;
@@ -239,14 +262,14 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
   }
   function citationControl(file, passage) {
     const box = node('details', 'workspace-citation'), summary = node('summary', '', 'Source citation'), text = citationText(file, passage), code = node('code', '', text);
-    box.append(summary, code, action('Copy citation', () => copyText(text, code), 'ghost')); return box;
+    box.append(summary, code, action('Copy citation', () => copyText(text, code), 'ghost', 'copy')); return box;
   }
   function renderPreview(context, draft) {
     const root = field('preview'); releasePreview(); root.replaceChildren();
     const content = draft.historical ?? draft.content, file = content?.file ?? draft.file;
     if (draft.historical) {
-      const bar = node('div', 'workspace-actions'); bar.append(node('p', 'small', `Viewing ${revisionLabel(file).toLowerCase()}. This is a read-only saved revision.`), action('Return to current file', () => { draft.historical = null; draft.passageOffset = 0; renderPreview(context, draft); })); root.append(bar);
-      const link = node('a', 'file-link', 'Download this revision'); link.href = downloadUrl(context, file); link.download = file.path.split('/').at(-1); root.append(link);
+      const bar = node('div', 'workspace-actions'); bar.append(node('p', 'small', `Viewing ${revisionLabel(file).toLowerCase()}. This is a read-only saved revision.`), action('Return to current file', () => { draft.historical = null; draft.passageOffset = 0; renderPreview(context, draft); }, 'ghost', 'undo'));
+      const link = node('a', 'file-link'); iconAction(link, `Download ${revisionLabel(file).toLowerCase()}`, 'download'); link.href = downloadUrl(context, file); link.download = file.path.split('/').at(-1); bar.append(link); root.append(bar);
     }
     if (file.deleted && !draft.historical) { root.append(node('p', 'small', 'This file was deleted. Use Revisions to view or restore earlier content.')); return; }
     if (!draft.isNew) root.append(citationControl(file));
@@ -292,8 +315,8 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
       }
       if (passages.length > PASSAGES_PER_PAGE) {
         const controls = node('div', 'workspace-actions');
-        const previous = action('Previous passages', () => { draft.passageOffset = Math.max(0, offset - PASSAGES_PER_PAGE); renderPreview(context, draft); }); previous.disabled = offset === 0;
-        const next = action('Next passages', () => { draft.passageOffset = offset + PASSAGES_PER_PAGE; renderPreview(context, draft); }); next.disabled = offset + PASSAGES_PER_PAGE >= passages.length;
+        const previous = action('Previous passages', () => { draft.passageOffset = Math.max(0, offset - PASSAGES_PER_PAGE); renderPreview(context, draft); }, 'ghost', 'previous'); previous.disabled = offset === 0;
+        const next = action('Next passages', () => { draft.passageOffset = offset + PASSAGES_PER_PAGE; renderPreview(context, draft); }, 'ghost', 'next'); next.disabled = offset + PASSAGES_PER_PAGE >= passages.length;
         controls.append(previous, node('span', 'small', `${offset + 1}–${Math.min(offset + PASSAGES_PER_PAGE, passages.length)} of ${passages.length}`), next); root.append(controls);
       }
       return;
@@ -303,13 +326,13 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
   function renderHistory(context, draft) {
     const root = field('history'); root.replaceChildren();
     if (draft.historyLoading) { root.append(node('p', 'small', 'Loading revisions…')); return; }
-    if (!draft.history) { root.append(action('Load revisions', () => loadHistory(context, draft))); return; }
+    if (!draft.history) { root.append(action('Load revisions', () => loadHistory(context, draft), 'ghost', 'refresh')); return; }
     for (const file of draft.history.revisions) {
       const row = node('div', 'workspace-revision'); row.append(node('div', '', `${revisionLabel(file)}${file.revision === draft.history.currentRevision ? ' · Current' : ''}${file.deleted ? ' · Deleted' : ''}`), node('small', '', `${dateLabel(file.createdAt)} · ${bytesLabel(file.size)}`));
       if (!file.deleted) {
         const controls = node('div', 'workspace-actions');
-        const preview = action('View', () => viewRevision(context, draft, file.revision)); preview.disabled = draft.busy || context.busy;
-        const restore = action('Restore', () => restoreRevision(context, draft, file)); restore.disabled = draft.busy || context.busy || file.revision === draft.file.revision;
+        const preview = action(`View ${revisionLabel(file).toLowerCase()}`, () => viewRevision(context, draft, file.revision), 'ghost', 'preview'); preview.disabled = draft.busy || context.busy;
+        const restore = action(`Restore ${revisionLabel(file).toLowerCase()}`, () => restoreRevision(context, draft, file), 'ghost', 'history'); restore.disabled = draft.busy || context.busy || file.revision === draft.file.revision;
         controls.append(preview, restore); row.append(controls);
       }
       root.append(row);
@@ -506,9 +529,11 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     field('run').disabled = !context || !!getConversation()?.activeJob || !runtimeReady() || run.starting || run.unknown || job && !terminalStatuses.has(job.status) || !run.code.trim() || run.allowPackages && runtime?.packages !== true;
     field('run').textContent = run?.starting ? 'Starting…' : 'Run';
     field('stop').disabled = !job?.id || !activeStatuses.has(job.status) || run?.canceling;
-    field('stop').textContent = run?.canceling ? 'Stopping…' : 'Stop';
+    iconAction(field('stop'), run?.canceling ? 'Stopping run…' : 'Stop run', 'stop');
     field('recent').disabled = !context || run.recovering;
-    field('job-status').textContent = getConversation()?.activeJob ? 'Stop the active generation before a manual run.' : run?.unknown ? 'Start status unknown. Check Recent runs before submitting again.' : job ? `${job.status}${job.exitCode != null ? ` · exit ${job.exitCode}` : ''} · execution ${job.id}${job.operationId ? ` · runner ${job.operationId}` : ''}` : '';
+    field('job-status').textContent = getConversation()?.activeJob ? 'Stop the active generation before a manual run.' : run?.unknown ? 'Start status unknown. Check Recent runs before submitting again.' : job ? `${job.status}${job.exitCode != null ? ` · exit ${job.exitCode}` : ''}` : '';
+    field('job-status').title = job ? `Execution ${job.id}${job.operationId ? ` · runner operation ${job.operationId}` : ''}` : '';
+    field('job-details').textContent = job ? `Execution ${job.id}${job.operationId ? ` · runner operation ${job.operationId}` : ''}` : '';
     errorText(field('run-error'), run?.error);
     field('job').hidden = !job;
     if (job) {
@@ -524,7 +549,12 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
       const files = field('output-files'); files.replaceChildren();
       for (const file of (Array.isArray(job.files) ? job.files : []).slice(0, 32)) {
         const path = typeof file === 'string' ? file : file.path; if (typeof path !== 'string') continue;
-        files.append(action(path, () => { selectSection('files'); openPath(context, path, { revision: typeof file === 'object' ? file.revision : undefined }); }, 'file-link'));
+        const button = action('', () => { selectSection('files'); openPath(context, path, { revision: typeof file === 'object' ? file.revision : undefined }); }, 'workspace-output-file');
+        const { type, icon } = filePresentation(typeof file === 'object' ? file : { path });
+        button.title = `${path}${typeof file === 'object' && file.revision ? `\nRevision ${file.revision}` : ''}`; button.setAttribute('aria-label', `Preview ${path}, ${type}`);
+        const mark = node('span', `workspace-file-icon workspace-file-${icon}`); mark.innerHTML = presentationIcon(icon);
+        const label = node('span', 'workspace-file-label'); label.append(node('span', 'workspace-file-name', path.split('/').at(-1)), node('small', '', type));
+        button.append(mark, label); files.append(button);
       }
       field('output-title').hidden = !files.children.length;
     }
@@ -612,7 +642,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     field('pip').disabled = field('npm').disabled = field('package-consent').disabled = !context;
     field('package-load').disabled = !context || packages.loading || packages.saving;
     field('package-save').disabled = !context || packages.loading || packages.saving || !packages.consent || !runtimeReady() || runtime?.packages !== true;
-    field('package-save').textContent = packages?.saving ? 'Validating packages…' : 'Validate and save packages';
+    field('package-save').textContent = packages?.saving ? 'Validating…' : 'Validate and save';
     field('package-status').textContent = packages?.loading ? 'Loading package list…' : packages?.saving ? 'Package validation is running. File and code editors remain available.' : packages?.status || (runtime?.packages === false ? 'This runner does not provide package installation.' : 'Load the saved list before changing existing packages.');
     errorText(field('package-error'), packages?.error);
   }

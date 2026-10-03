@@ -1,0 +1,53 @@
+/* Load after style.css. These rules apply only to compact file/tool results. */
+.generated-files.compact-generated-files { width: min(100%, 560px); margin: 14px 0; }
+.generated-file-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 16px; background: var(--card); overflow: hidden; }
+.generated-file-row { display: flex; align-items: center; gap: 12px; min-width: 0; min-height: 60px; padding: 10px 12px 10px 16px; }
+.generated-file-row + .generated-file-row { border-top: 1px solid var(--sidebar-border); }
+.result-file-icon, .result-file-download { display: inline-flex; flex: 0 0 auto; color: var(--muted-foreground); }
+.result-file-image { color: #a64c81; }
+.dark .result-file-image { color: #e589bd; }
+.result-file-icon svg, .result-file-download svg { width: 18px; height: 18px; }
+.generated-file-label { display: grid; flex: 1 1 auto; gap: 1px; min-width: 0; color: var(--foreground); text-decoration: none; border-radius: 4px; overflow-wrap: anywhere; }
+.generated-file-label:hover .generated-file-name { text-decoration: underline; text-underline-offset: 3px; }
+.generated-file-name { font-size: 13px; line-height: 1.45; font-weight: 500; }
+.generated-file-type { font-size: 11px; line-height: 1.5; color: var(--muted-foreground); }
+.result-file-download { padding: 8px; }
+.tool-icon-button { flex: 0 0 auto; width: 34px; height: 34px; min-height: 34px; padding: 7px; border-color: transparent; border-radius: 999px; background: transparent; color: var(--muted-foreground); }
+.tool-icon-button:hover:not(:disabled) { color: var(--foreground); background: var(--accent); }
+.tool-icon-button svg { width: 18px; height: 18px; }
+.tool-activity.compact-tool-activity { margin: 8px 0 12px; padding: 0; border: 0; border-radius: 0; color: var(--muted-foreground); }
+.compact-tool-activity summary { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; width: fit-content; max-width: 100%; min-height: 32px; padding: 5px 7px; border-radius: 8px; list-style: none; cursor: pointer; font-size: 11px; line-height: 1.5; }
+.compact-tool-activity summary::-webkit-details-marker { display: none; }
+.compact-tool-activity summary:hover { background: var(--accent); }
+.compact-tool-activity summary > svg { width: 12px; height: 12px; }
+.tool-activity-group[open] > summary > svg, .tool-call[open] > summary > svg { transform: rotate(90deg); }
+.tool-activity-states { display: inline-flex; flex-wrap: wrap; gap: 3px 8px; }
+.tool-summary-status + .tool-summary-status::before { content: '·'; margin-right: 8px; color: var(--muted-foreground); }
+.tool-status-active { color: var(--foreground); font-weight: 500; }
+.tool-status-error { color: var(--destructive); }
+.tool-activity-records { margin: 4px 0 0 12px; padding-left: 10px; border-left: 1px solid var(--sidebar-border); }
+.tool-call { padding: 3px 0; }
+.tool-call + .tool-call { border-top: 1px solid var(--sidebar-border); }
+.tool-call > summary { width: 100%; flex-wrap: nowrap; }
+.tool-call-name { flex: 1 1 auto; min-width: 0; color: var(--foreground); overflow-wrap: anywhere; }
+.tool-call-status { flex: 0 1 auto; overflow-wrap: anywhere; }
+.tool-call-body { padding: 0 7px 7px 19px; }
+.compact-tool-activity pre { margin: 6px 0; padding: 8px 10px; border-color: var(--sidebar-border); border-radius: 10px; font-size: 11px; line-height: 1.6; }
+.tool-call-body > p, .tool-call-footer > p { margin: 6px 0; font-size: 11px; overflow-wrap: anywhere; }
+.tool-call-footer { display: flex; align-items: center; gap: 8px; }
+.tool-call-footer > p { flex: 1; min-width: 0; }
+.tool-turn-details { margin-top: 5px; font-size: 11px; }
+.tool-turn-details > summary { list-style: disclosure-closed; display: list-item; margin-left: 7px; padding-left: 2px; }
+.tool-turn-details[open] > summary { list-style: disclosure-open; }
+.tool-turn-details > summary::-webkit-details-marker { display: inline; }
+.tool-turn-details p { margin: 6px 7px 8px; overflow-wrap: anywhere; }
+@media (max-width: 480px) {
+  .generated-file-row { gap: 10px; padding-left: 12px; }
+  .tool-activity-states { flex-basis: 100%; padding-left: 19px; }
+  .tool-call-body { padding-left: 7px; }
+}
+@media (pointer: coarse) {
+  .tool-icon-button { width: 42px; height: 42px; min-height: 42px; padding: 11px; }
+  .compact-tool-activity summary { min-height: 40px; }
+  .generated-file-row { min-height: 64px; }
+}
