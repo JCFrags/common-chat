@@ -48,6 +48,16 @@ h3 { font-size: 15px; font-weight: 600; }
 .brand-name { font-weight: 600; font-size: 15px; letter-spacing: -.3px; }
 .brand .brand-mark { width: 29px; height: 29px; border-radius: 8px; }
 .brand .brand-mark svg { width: 17px; height: 17px; }
+#sidebar-compact-toggle { margin-left: auto; flex: 0 0 auto; }
+@media (min-width: 761px) {
+  #app.sidebar-compact { grid-template-columns: 64px minmax(0, 1fr); }
+  #app.sidebar-compact .brand { justify-content: center; padding: 0 0 10px; }
+  #app.sidebar-compact .brand-name, #app.sidebar-compact .brand-mark,
+  #app.sidebar-compact .search, #app.sidebar-compact #conversation-list { display: none; }
+  #app.sidebar-compact #sidebar-compact-toggle { margin: 0; }
+  #app.sidebar-compact .sidebar-quick { flex-direction: column; }
+  #app.sidebar-compact .sidebar-footer { flex-direction: column; margin-top: auto; }
+}
 .sidebar-quick { display: flex; align-items: center; gap: 4px; padding: 0 2px; }
 #workspace-slot { display: flex; align-items: center; }
 #workspace-slot:empty { display: none; }
@@ -270,6 +280,7 @@ dialog legend { padding: 0 6px; font-size: 12px; }
 .mobile-only { display: none; }
 #sidebar-backdrop { display: none; }
 @media (max-width: 760px) {
+  #sidebar-compact-toggle { display: none; }
   #app { grid-template-columns: minmax(0, 1fr); }
   #sidebar { position: fixed; left: -280px; top: 0; bottom: 0; z-index: 30; width: 264px; padding: 18px 12px 10px; transition: left .15s ease; }
   .brand { gap: 10px; padding: 0 8px 20px; }

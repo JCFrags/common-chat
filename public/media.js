@@ -73,7 +73,7 @@ export function updateMediaHints(provider) {
   if (input) input.accept = baseAccept + (enabled(provider, 'audio') ? ',audio/wav,audio/mpeg,audio/flac,.wav,.mp3,.flac' : '') + (enabled(provider, 'video') ? ',video/mp4,video/webm,.mp4,.webm' : '');
   const button = document.querySelector('#attach-button');
   if (button) {
-    button.title = 'Attach images or UTF-8 text' + (enabled(provider, 'audio') ? ', WAV/MP3/FLAC audio' : '') + (enabled(provider, 'video') ? ', or short MP4/WebM video (visual-only)' : '');
+    button.title = 'Upload or tools. Attach images or UTF-8 text' + (enabled(provider, 'audio') ? ', WAV/MP3/FLAC audio' : '') + (enabled(provider, 'video') ? ', or short MP4/WebM video (visual-only)' : '');
     button.setAttribute('aria-describedby', 'media-input-hint');
   }
 }
@@ -90,7 +90,9 @@ export function installMediaControls() {
     const composer = document.querySelector('#composer');
     if (composer) {
       const hint = document.createElement('div'); hint.id = 'media-input-hint'; hint.className = 'small';
-      composer.after(hint); updateMediaHints(null);
+      const host = document.querySelector('#media-info') ?? document.querySelector('#native-tools-panel');
+      if (host) host.append(hint); else { hint.hidden = true; composer.after(hint); }
+      updateMediaHints(null);
     }
   }
   return { read: readMediaCapabilities, write: writeMediaCapabilities, update: updateMediaHints };

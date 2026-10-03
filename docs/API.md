@@ -77,9 +77,13 @@ An empty key on update retains the saved key. `clearKey: true` removes it. Conne
 
 `capabilities.llamaCppTimings` defaults to false. Only an enabled streaming connection sends the llama.cpp request extensions `timings_per_token: true` and `return_progress: true`. Enable this capability only for an endpoint that supports both fields. The server still consumes validated interim usage, timings, and prompt progress when supplied without this option.
 
-`capabilities.tools` also defaults to false. It permits the provider protocol, not a standing grant to execute a model request. Each submission must grant its own tool permissions.
+`capabilities.tools` also defaults to false. It declares function-tool protocol support. The web interface computes permissions for all available native tools automatically before each turn. The API still uses an explicit `tools` object per submission, and omitted API permissions remain false.
 
 `capabilities.audioInput` and `capabilities.videoInput` accept only `none` or `llama_cpp`, with `none` as the default. These are independent of vision, tools, and statistics. Enable them only when the endpoint and selected model support the native input. See [MEDIA.md](MEDIA.md) for exact payloads, codec checks, and branch limits.
+
+`capabilities.thinking` accepts `none` (default), `llama_cpp`, or `reasoning_effort`. The latter also requires `thinkingLevels`, a nonempty supported subset of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Configure only values supported by every model on that connection. Do not infer support from a model name, vision, or returned reasoning.
+
+Omitted `settings.thinking` sends no override. With `llama_cpp`, `on` or `off` sends `chat_template_kwargs: { "enable_thinking": true or false }`. With `reasoning_effort`, a configured level sends top-level `reasoning_effort`. A mismatched or unsupported value fails before messages are saved. The selected value stays in the response's settings. No existing connection is enabled automatically. See [thinking controls](INTERFACE.md#thinking).
 
 ## Generation example
 
@@ -113,7 +117,7 @@ Regeneration sets `regenerate: true` and uses a user message ID as `parentId`. I
 
 Optional `settings.toolCalls` and `settings.toolRounds` are local per-turn work budgets. Each accepts an integer from 1 to 1000000. Omit a budget to turn it off. These settings are not sent as provider sampling controls. The final text answer does not count as a tool round. A reached budget preserves completed work, records blocked calls without dispatch, and requests a final answer from saved results.
 
-Omitted tool permissions are false. `workspace` enables scoped file tools. `execute` enables isolated Python/shell access to a copied conversation workspace, even if direct workspace tools are off. `packages` permits package verification and restoration of saved dependencies. Permissions apply only to this submission and its bounded follow-up rounds. Regeneration requires a new grant. Imported permissions, model arguments, and document contents cannot grant permission. See [TOOLS.md](TOOLS.md).
+Omitted tool permissions are false. `workspace` enables scoped file tools. `execute` enables isolated Python/shell access to a copied conversation workspace, even if direct workspace tools are off. `packages` permits package verification and restoration of saved dependencies. Permissions apply only to this submission and its bounded follow-up rounds. The web interface checks available tools again for regeneration. Imported permissions, model arguments, and document contents cannot grant permission. See [TOOLS.md](TOOLS.md).
 
 ## Event handling
 

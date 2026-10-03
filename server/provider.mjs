@@ -34,6 +34,17 @@ export async function* sseRecords(stream) {
   const result = take(''); if (result !== null) yield result;
 }
 
+/** Send thinking fields only for an explicitly configured protocol and level. */
+export function thinkingPayload(provider, settings) {
+  if (settings.thinking === undefined) return {};
+  const capabilities = provider.capabilities ?? {};
+  if (capabilities.thinking === 'llama_cpp' && ['on', 'off'].includes(settings.thinking)) {
+    return { chat_template_kwargs: { enable_thinking: settings.thinking === 'on' } };
+  }
+  if (capabilities.thinking === 'reasoning_effort' && capabilities.thinkingLevels?.includes(settings.thinking)) return { reasoning_effort: settings.thinking };
+  fail(400, 'The selected connection and model do not enable this thinking level. Use the provider default or configure its supported protocol.');
+}
+
 export function headers(provider) {
   return { 'Content-Type': 'application/json', ...(provider.apiKey ? { Authorization: `Bearer ${provider.apiKey}` } : {}) };
 }

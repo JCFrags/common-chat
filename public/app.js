@@ -136,7 +136,6 @@ function renderDraft() {
 }
 function updateControls() {
   toolControls?.refresh(); thinkingControls?.refresh(); updateMediaHints(selectedProvider());
-  $('#attach-button').title = `Upload and tools. ${$('#attach-button').title}`;
   const unavailable = state.loading || state.missing || !!state.draftKey && state.conversation?.id !== state.draftKey;
   const running = !!state.conversation?.activeJob || state.conversation?.messages.some(m => m.status === 'streaming');
   const locked = state.busy || state.loading || !!state.retry;
@@ -845,7 +844,7 @@ window.addEventListener('online', () => { if (state.authenticated) { connectEven
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.authenticated) { loadCurrent().catch(() => {}); refreshList().catch(() => {}); checkPending(); } });
 document.addEventListener('keydown', event => {
   if (!state.authenticated || document.querySelector('dialog[open]')) return;
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); $('#app').classList.add('sidebar-open'); $('#search').focus(); }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); shellUI.expandSidebar(); $('#search').focus(); }
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 'o') { event.preventDefault(); newChat(); }
 });
 window.addEventListener('storage', event => {
@@ -855,7 +854,10 @@ window.addEventListener('beforeunload', event => {
   rememberDraft();
   if (drafts.hasUnsaved || state.busy) { event.preventDefault(); event.returnValue = ''; }
 });
-shellUI = installShell({ onSettingsTab: tab => { if (tab === 'generation') fillGenerationForm(); else updateControls(); } });
+shellUI = installShell({ onSettingsTab: tab => {
+  if (tab === 'generation') fillGenerationForm();
+  else { updateControls(); if (tab === 'tools') toolControls?.checkRuntime(); }
+} });
 installMediaControls();
 thinkingControls = installThinkingControls({ getProvider: selectedProvider, getSettings: () => state.conversation?.settings ?? {},
   onChange: changeThinking, busy: () => state.busy || state.loading || state.missing || !!state.retry || !!state.conversation?.activeJob, toast });

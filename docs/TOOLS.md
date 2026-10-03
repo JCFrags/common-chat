@@ -1,6 +1,8 @@
 # Model tools and isolated executions
 
-Tools are opt-in. A connection must enable `capabilities.tools`, which defaults to false. Each generation must also receive explicit user permissions:
+The web interface makes all available native tools automatic on connections configured for the function-tool protocol. A connection must enable `capabilities.tools`, which defaults to false. This declares provider compatibility, not a per-chat enable step. Before each new turn or regeneration, the interface checks actual runner readiness. File tools remain available without a runner. Execution and registry packages are included only when their runtime capabilities are ready. Reload does not disable available tools.
+
+The API keeps explicit per-submission permissions for other clients:
 
 ```json
 {
@@ -12,13 +14,17 @@ Tools are opt-in. A connection must enable `capabilities.tools`, which defaults 
 }
 ```
 
-Omitted permissions are false. Permissions apply only to that submission and its follow-up rounds. Regeneration needs a new grant. Saved permissions, imported records, model arguments, and document text cannot grant permission.
+For API clients, omitted permissions remain false. Permissions apply only to that submission and its follow-up rounds. The web interface computes new permissions automatically for each turn, including regeneration. An unresolved submission retry keeps its original request and permissions. Saved permissions, imported records, model arguments, and document text cannot grant permission.
 
 - `workspace` permits file listing, bounded reading, text replacement, and search in the current conversation workspace.
 - `execute` permits Python and POSIX shell in the separately configured isolated runner. An execution receives a copied snapshot of the current conversation workspace and can produce file revisions. It therefore permits workspace access through code even if direct workspace tools are off.
 - `packages` permits registry package installation and restoration of saved conversation dependencies. A code execution with saved package specifications requires this permission because the runner can fetch dependencies again.
 
 No model argument can choose a conversation ID, host path, image, engine flag, host environment, network policy, or permission. The app supplies the conversation ID. The runner supplies the execution policy. Code fences remain display content. They never trigger these tools.
+
+Settings, Tools lists the native catalog and current availability without enable checkboxes. Paperclip, Tools opens file/code operations or this availability page. Manual code review, Run, and manual package consent remain separate. External MCP connections are not configured or executed by this policy.
+
+`nativeTools` derives from the same server registry as the function definitions. Each entry contains `source: "native"`, `category`, `name`, `title`, `description`, and runtime `available`. The selected provider must also support function tools. Adding a native definition within an existing bounded category updates both the catalog and protocol list. A new authority category or an external tool needs an explicit integration, not a host-execution fallback. See [interface and capability controls](INTERFACE.md).
 
 ## Model protocol
 
@@ -88,7 +94,7 @@ These routes use the app's existing authentication, Host/Origin checks, and same
 
 | Method | Path | Result |
 | --- | --- | --- |
-| GET | `/api/runtime` | `{enabled, ready, packages, limits, inventory, blockedReasons}`. Verified bundled inventory can be `null`. |
+| GET | `/api/runtime` | `{enabled, ready, packages, limits, inventory, blockedReasons, nativeTools}`. Verified bundled inventory can be `null`. |
 | POST | `/api/conversations/:cid/executions` | Submit `{kind: "python" or "shell", code, allowPackages: boolean}`. Return `{id, status}` with HTTP 202. |
 | GET | `/api/conversations/:cid/executions` | `{executions: [...]}` with the 20 most recent compact records. |
 | GET | `/api/conversations/:cid/executions/:id` | `{id, operationId, kind, status, stdout, stderr, exitCode, files, availableFiles, fileNote, error, createdAt, updatedAt}`. |

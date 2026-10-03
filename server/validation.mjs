@@ -23,7 +23,7 @@ export function integer(value, label, min, max) {
 }
 export function settings(value = {}) {
   object(value, 'settings');
-  const allowed = new Set(['systemPrompt', 'temperature', 'topP', 'maxTokens', 'toolCalls', 'toolRounds']);
+  const allowed = new Set(['systemPrompt', 'temperature', 'topP', 'maxTokens', 'toolCalls', 'toolRounds', 'thinking']);
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(400, `Unknown setting: ${key}.`);
   const result = {};
   if ('systemPrompt' in value) result.systemPrompt = text(value.systemPrompt, 'systemPrompt', 100000, true);
@@ -35,6 +35,10 @@ export function settings(value = {}) {
   }
   if (value.maxTokens !== undefined && value.maxTokens !== null && value.maxTokens !== '') {
     result.maxTokens = integer(value.maxTokens, 'maxTokens', 1, 1000000);
+  }
+  if (value.thinking !== undefined && value.thinking !== null && value.thinking !== '') {
+    if (!['on', 'off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value.thinking)) fail(400, 'Invalid thinking level.');
+    result.thinking = value.thinking;
   }
   // These are local work budgets, not provider sampling controls. Omission disables them.
   for (const key of ['toolCalls', 'toolRounds']) {
@@ -62,6 +66,13 @@ export function providerConfig(value) {
   for (const key of ['audioInput', 'videoInput']) {
     capabilities[key] = c[key] === undefined ? 'none' : c[key];
     if (!['none', 'llama_cpp'].includes(capabilities[key])) fail(400, `Invalid capability: ${key}.`);
+  }
+  capabilities.thinking = c.thinking ?? 'none';
+  if (!['none', 'llama_cpp', 'reasoning_effort'].includes(capabilities.thinking)) fail(400, 'Invalid thinking protocol.');
+  if (capabilities.thinking === 'reasoning_effort') {
+    const levels = c.thinkingLevels;
+    if (!Array.isArray(levels) || !levels.length || levels.length > 7 || levels.some(level => !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(level))) fail(400, 'Configure the thinking levels supported by this connection and its models.');
+    capabilities.thinkingLevels = [...new Set(levels)];
   }
   capabilities.tokenParameter = c.tokenParameter ?? 'max_tokens';
   if (!['max_tokens', 'max_completion_tokens'].includes(capabilities.tokenParameter)) fail(400, 'Invalid token parameter.');

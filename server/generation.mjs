@@ -1,5 +1,5 @@
 import { id, now, fail, hash, object, text, settings as validateSettings } from './validation.mjs';
-import { sseRecords, headers, errorText, responseError, limitedText, deltaText, usageStats, timingStats, promptProgressStats } from './provider.mjs';
+import { sseRecords, headers, errorText, responseError, limitedText, deltaText, usageStats, timingStats, promptProgressStats, thinkingPayload } from './provider.mjs';
 import { toolPermissions, toolTranscript, ToolCallAccumulator, TOOL_LIMITS } from './tools.mjs';
 
 export class Generations {
@@ -23,6 +23,7 @@ export class Generations {
     });
   }
   validateCapabilities(p, settings, rows, attachments) {
+    thinkingPayload(p, settings);
     for (const key of ['temperature', 'topP', 'maxTokens']) {
       if (settings[key] !== undefined && !p.capabilities[key]) fail(400, `The selected connection does not enable ${key}. Remove that setting or edit its capabilities.`);
     }
@@ -152,7 +153,7 @@ export class Generations {
       if (messages[0]?.role === 'system' && typeof messages[0].content === 'string') messages[0].content += `\n\n${guide}`;
       else messages.unshift({ role: 'system', content: guide });
     }
-    const payload = { model, messages, stream: p.capabilities.streaming };
+    const payload = { model, messages, stream: p.capabilities.streaming, ...thinkingPayload(p, settings) };
     if (definitions.length) payload.tools = definitions;
     if (payload.stream) {
       payload.stream_options = { include_usage: true };

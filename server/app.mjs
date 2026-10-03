@@ -28,6 +28,10 @@ const assets = new Map([
   ['/workspace.css', ['workspace.css', 'text/css; charset=utf-8']],
   ['/media.js', ['media.js', 'text/javascript; charset=utf-8']],
   ['/tool-controls.js', ['tool-controls.js', 'text/javascript; charset=utf-8']],
+  ['/tool-presentation.js', ['tool-presentation.js', 'text/javascript; charset=utf-8']],
+  ['/tool-presentation.css', ['tool-presentation.css', 'text/css; charset=utf-8']],
+  ['/thinking.js', ['thinking.js', 'text/javascript; charset=utf-8']],
+  ['/ui-shell.js', ['ui-shell.js', 'text/javascript; charset=utf-8']],
   ['/drafts.js', ['drafts.js', 'text/javascript; charset=utf-8']],
   ['/diagram-source.js', ['diagram-source.js', 'text/javascript; charset=utf-8']],
   ['/vendor/rich-text.js', ['vendor/rich-text.js', 'text/javascript; charset=utf-8']],
@@ -184,7 +188,10 @@ export async function createApp(options = {}) {
         const input = await body(req, 128 * 1024), cid = store.createConversation(text(input.title ?? 'New chat', 'title', 500), settings(input.settings ?? {}));
         emit({ type: 'changed', conversationId: cid }); send(res, store.snapshot(cid), 201); return;
       }
-      if (path === '/api/runtime' && method === 'GET') { send(res, await executions.runtime()); return; }
+      if (path === '/api/runtime' && method === 'GET') {
+        const runtime = await executions.runtime();
+        send(res, { ...runtime, nativeTools: tools.catalog(runtime) }); return;
+      }
       const workspaceMatch = /^\/api\/conversations\/([^/]+)\/workspace(?:\/|$)/.exec(path);
       if (await handleWorkspace({ req, res, url, method, send })) {
         if (workspaceMatch && !['GET', 'HEAD'].includes(method)) emit({ type: 'changed', conversationId: decodeURIComponent(workspaceMatch[1]) });

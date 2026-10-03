@@ -22,6 +22,25 @@ export function installShell({ onSettingsTab = () => {} } = {}) {
     onSettingsTab(name);
   }
   const mobile = matchMedia('(max-width: 760px)');
+  const sidebarToggle = $('#sidebar-compact-toggle'), app = $('#app');
+  const sidebarKey = 'common-chat:sidebar-compact';
+  let compact = true;
+  try { compact = localStorage.getItem(sidebarKey) !== 'false'; } catch { /* Layout storage is optional. */ }
+  function setCompact(value) {
+    compact = value; app.classList.toggle('sidebar-compact', compact);
+    sidebarToggle.setAttribute('aria-expanded', String(!compact));
+    sidebarToggle.setAttribute('aria-label', compact ? 'Expand sidebar' : 'Collapse sidebar');
+    sidebarToggle.title = compact ? 'Expand sidebar' : 'Collapse sidebar';
+  }
+  function saveCompact(value) {
+    setCompact(value);
+    try { localStorage.setItem(sidebarKey, String(value)); } catch { /* Keep the in-page layout. */ }
+  }
+  function expandSidebar() {
+    if (mobile.matches) app.classList.add('sidebar-open'); else saveCompact(false);
+  }
+  setCompact(compact);
+  sidebarToggle.addEventListener('click', () => saveCompact(!compact));
   const orientTabs = () => tablist.setAttribute('aria-orientation', mobile.matches ? 'horizontal' : 'vertical');
   orientTabs(); mobile.addEventListener('change', orientTabs);
   tablist.addEventListener('click', event => {
@@ -125,5 +144,5 @@ export function installShell({ onSettingsTab = () => {} } = {}) {
     if (!menu.contains(event.target) && event.target !== attach) closeUploadMenu();
     if (!picker.contains(event.target) && event.target !== model) closeModel();
   });
-  return { openSettings, closeSettings, openModel, closePopups, closeUploadMenu };
+  return { openSettings, closeSettings, openModel, closePopups, closeUploadMenu, expandSidebar };
 }

@@ -160,7 +160,7 @@ Use URLSearchParams for logical paths. Unknown or duplicate query parameters are
 
 ## Browser file results
 
-Tool receipts show revision-specific file cards outside collapsed activity. A card can represent a changed output or a file that remains available. It is not proof that the model tested the file. Download always retrieves the recorded revision. Preview supports bounded text/code, PNG/JPEG/WebP/GIF, extracted PDF/DOCX text, and native WAV/MP3/FLAC or MP4/WebM controls. Media codec support depends on the browser. Close the panel to stop media playback.
+Tool receipts show rounded, compact revision-specific file rows outside collapsed activity. The filename downloads the file, and a labeled icon opens its preview. A row can represent a changed output or a file that remains available. Provenance stays in the action titles and recorded activity. A row is not proof that the model tested the file. Download always retrieves the recorded revision. Quiet activity summaries retain all recorded calls, their counts, and visible error or blocked states. Preview supports bounded text/code, PNG/JPEG/WebP/GIF, extracted PDF/DOCX text, and native WAV/MP3/FLAC or MP4/WebM controls. Media codec support depends on the browser. Close the panel to stop media playback.
 
 Markdown activates only an exact same-conversation `/api/conversations/:cid/workspace/download` link with one valid path and one revision UUID. Other relative navigation, cross-conversation links, raw HTML, and Markdown images remain inactive. Workspace previews do not execute scripts.
 

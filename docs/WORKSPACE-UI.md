@@ -1,12 +1,12 @@
 # Workspace interface
 
-`public/workspace.js` and `public/workspace.css` provide the Files and Run code dialog. The component uses the existing theme and sanitized Markdown renderer. It does not change model connections, generation settings, or model tool permissions.
+`public/workspace.js` and `public/workspace.css` provide the Files and Run code dialog. `public/tool-presentation.js` and `public/tool-presentation.css` provide compact file rows and recorded tool activity. The components use the existing theme and sanitized Markdown renderer. They do not change model connections, generation settings, or model tool permissions.
 
 ## Integrate the component
 
-1. Serve `/workspace.js` and `/workspace.css` as local static assets.
-2. Add the stylesheet after `/style.css` in `public/index.html`.
-3. Import and install the component once, after the topbar DOM exists.
+1. Serve `/workspace.js`, `/workspace.css`, `/tool-presentation.js`, and `/tool-presentation.css` as local static assets.
+2. Load `/workspace.css` after `/style.css`, then load `/tool-presentation.css` in `public/index.html`.
+3. Import and install the component once, after the sidebar or topbar DOM exists.
 4. Call `refresh()` after a conversation change or a workspace/execution event. The call reads the current conversation through the supplied callback. It only requests files while the dialog is open.
 5. Call `close()` when showing the login screen or signing out. Closing stops browser polling, not server execution. It does not discard in-page editor drafts.
 
@@ -39,7 +39,7 @@ workspace.close();
 
 `getConversation()` returns the current snapshot or `null`. `ensureConversation()` returns the current or newly created snapshot asynchronously. The latter must update the value that `getConversation()` returns. `onChanged({conversationId, type, path?})` runs after confirmed mutations. It is not an authorization request. Execution start, completion, and package changes use type `execution`.
 
-The installer adds `#workspace-button` to `#topbar .toolbar`. Its return value is `{refresh, close, openFile, openExecution, openCode}`. `openFile(path, revision)` shows a saved revision. `openExecution(id)` shows its console and results. `openCode(source)` opens Python source for review and asks before replacing another code draft. It never starts execution or changes package consent. The installer rejects duplicate installation. It does not install global artifact previews or start a model.
+The installer adds the icon-only `#workspace-button` to `#workspace-slot` in the sidebar, with `#topbar .toolbar` as a fallback. Its accessible label and title are "Files and code". Its return value is `{refresh, close, openFile, openExecution, openCode}`. `openFile(path, revision)` shows a saved revision. `openExecution(id)` shows its console and results. `openCode(source)` opens Python source for review and asks before replacing another code draft. It never starts execution or changes package consent. The installer rejects duplicate installation. It does not install global artifact previews or start a model.
 
 ## File behavior
 
@@ -92,7 +92,7 @@ File metadata has `path`, opaque UUID `revision`, numeric `version`, `mime`, `si
 
 Execution routes:
 
-- `GET /api/runtime` returns `{enabled, ready, packages, limits, inventory, blockedReasons}`. Verified image inventory can be `null`.
+- `GET /api/runtime` returns `{enabled, ready, packages, limits, inventory, blockedReasons, nativeTools}`. The native tool catalog describes the existing server tools and their current availability. Verified image inventory can be `null`.
 - `POST /api/conversations/:cid/executions` accepts `{kind, code, allowPackages}` and returns `{id, status}`.
 - `GET /api/conversations/:cid/executions` returns `{executions}` with at most 20 recent entries.
 - `GET /api/conversations/:cid/executions/:id` returns `{id, operationId, status, stdout, stderr, exitCode, files, availableFiles, fileNote, error}`.
@@ -104,7 +104,7 @@ Terminal job statuses are `complete`, `error`, `cancelled`, `timed_out`, and `in
 
 ## Accessibility and verification
 
-The native modal dialog provides focus containment and Escape-to-close behavior. Section and file-view tabs support arrow keys, Home, and End. Controls have text labels. Errors use alert regions, and progress uses status regions. The layout uses the app's light/dark theme and switches to a stacked file list and editor on narrow screens. Source and console areas scroll rather than expanding the page width.
+The native modal dialog provides focus containment and Escape-to-close behavior. Section and file-view tabs support arrow keys, Home, and End. Icon-only ghost controls have accessible labels and titles. Run and package-consent controls keep visible labels and safety notices. Errors use alert regions, and progress uses status regions. The layout uses the app's light/dark theme and switches to a stacked file list and editor on narrow screens. Source and console areas scroll rather than expanding the page width.
 
 Existing verification commands are `npm run check` and `npm test`. No new automated test files or frameworks are needed for this component. Live UI verification requires the parent app hook, static routes, workspace routes, and runner integration. Syntax and existing-suite checks do not establish browser acceptance.
 

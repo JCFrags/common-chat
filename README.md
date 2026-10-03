@@ -16,7 +16,8 @@ Common Chat uses Node.js and browser JavaScript, with theme tokens adapted from 
 | Editing | Message edits create branches. Regeneration keeps earlier responses. Branch selection is shared across devices. |
 | Drafts | Unsent composer text, attachment references, edit state, and unresolved submissions persist in this browser's localStorage. They do not sync between devices. See [drafts](docs/DRAFTS.md). |
 | Workspace | Each conversation has logical files, immutable revisions, restore, and keyword search with source citations. PDF/DOCX extraction requires the isolated runner. See [workspaces](docs/WORKSPACE.md). |
-| Optional tools | Explicit per-submission permissions enable scoped file tools, Python/shell execution, and package operations. Execution needs a separately configured runner. See [tools](docs/TOOLS.md) and [runner setup](docs/RUNNER.md). |
+| Native tools | The web interface automatically makes available scoped file tools, Python/shell execution, and registry packages usable on compatible connections. Execution needs a separately configured runner. API clients still supply per-submission permissions. See [tools](docs/TOOLS.md) and [runner setup](docs/RUNNER.md). |
+| Compact interface | A compact desktop sidebar, one categorized Settings dialog, composer model/thinking controls, and concise revision-bound file rows. MCP and dictation have inactive entry points. See [interface controls](docs/INTERFACE.md). |
 | Attachments | UTF-8 text and PNG, JPEG, WebP, or GIF images remain supported. Image requests require vision capability. Audio/video require inspection and the explicit `llama_cpp` input protocol. See [media](docs/MEDIA.md). |
 | Migration | The importer accepts llama.cpp legacy JSON, current JSONL, and ZIP archives of conversation exports. |
 | Authentication | One owner account can have separate sessions on multiple devices. API keys use authenticated encryption at rest. |
@@ -47,14 +48,14 @@ Some Node.js 22 versions print an experimental warning for `node:sqlite`. The or
 
 The chat server must be able to reach the model endpoint. The browser does not connect to that endpoint directly. The base URL must include the API prefix, usually `/v1`. The application adds `/models` or `/chat/completions` to this URL.
 
-1. Open "Connections".
+1. Open Settings, Connections.
 2. Enter a connection name.
 3. Enter the base URL for the model server.
 4. Enter its API key when the endpoint requires one.
 5. Enter model names or leave the list empty for model discovery.
 6. Enable only the capabilities that the endpoint and selected models support.
 7. Select "Save connection".
-8. Select a connection and model above the conversation.
+8. Use the model button beside Send, or Settings, Connections, to select the connection and model.
 9. Enter a message.
 10. Select "Send".
 
@@ -70,7 +71,7 @@ Both named projects document OpenAI-compatible endpoints. The backend baseline u
 
 Capabilities are configured per connection. Separate connections can use the same endpoint with different model lists and capabilities. Unsupported settings cause explicit errors rather than silent omission. The settings dialog hides unsupported controls. For a compatible llama.cpp server, enable "Live llama.cpp statistics (llama.cpp only)" to request interim timing and prompt-progress records. This option defaults to off. Do not enable it for other providers.
 
-Audio input, video input, and model tools each need their own explicit capability. Vision and statistics settings do not enable them. Audio/video protocol selections default to `none`; choose `llama_cpp` only when the endpoint and selected model support that input. Native video supplies visual frames, not its soundtrack. Tools also require a fresh permission grant on each submission. See [media](docs/MEDIA.md) and [tool permissions](docs/TOOLS.md).
+Audio input, video input, and model tools each need their own explicit capability. Vision and statistics settings do not enable them. Audio/video protocol selections default to `none`; choose `llama_cpp` only when the endpoint and selected model support that input. Native video supplies visual frames, not its soundtrack. The web interface checks tool availability automatically on each new submission. No per-chat enable step is needed. Thinking controls require their own configured protocol and supported levels. See [media](docs/MEDIA.md), [tool policy](docs/TOOLS.md), and [interface capabilities](docs/INTERFACE.md).
 
 ## Drafts, files, and optional execution
 
@@ -126,7 +127,7 @@ DATA_DIR=./data
 
 The application cannot read another browser's IndexedDB directly. Export the conversations from the original llama.cpp interface first.
 
-1. Select "Import conversations" in Common Chat.
+1. Open Settings, Data, then select "Import conversations".
 2. Select the exported JSON, JSONL, or ZIP file.
 3. Review the import result and any warnings.
 4. Open an imported conversation from the sidebar.
@@ -182,7 +183,7 @@ Preview code cannot access chat DOM, cookies, storage, or host files. Automatic 
 
 On mobile layouts up to 760 CSS pixels wide, a right swipe from the left 24-pixel edge opens the sidebar. A left swipe from a noninteractive area inside the open sidebar closes it. Swipes need at least 64 pixels of horizontal movement within 800 ms and must be mostly horizontal. Buttons, links, text entry, selected text, and rich message content retain their normal touch actions. Vertical scrolling and horizontal code/table/diagram scrolling do not invoke the gesture. The menu button and backdrop tap remain available. Physical-phone behavior requires device verification.
 
-Optional model tools are limited to the documented workspace and runner operations. There is no MCP integration, unrestricted host execution, model management, or offline synchronization. PDF/DOCX extraction is not optical character recognition. Audio transcription and visual interpretation depend on a compatible selected model, not a built-in transcription service. There is no microphone/camera capture or audio/video generation. The application uses chat completions, not a universal provider protocol or the Responses API.
+Optional model tools are limited to the documented workspace and runner operations. There is no MCP integration, unrestricted host execution, model management, or offline synchronization. PDF/DOCX extraction is not optical character recognition. Audio transcription and visual interpretation depend on a compatible selected model, not a built-in transcription service. The microphone opens an inactive dictation entry point. There is no microphone/camera capture or audio/video generation. The application uses chat completions, not a universal provider protocol or the Responses API.
 
 The server allows one active generation per conversation and eight overall. It limits each upload to 10 MiB and each message to ten attachments. The selected context has a 30 MiB attachment limit. Conversation exports must fit the 24 MiB import limit. Larger history requires a full offline backup.
 
