@@ -12,17 +12,32 @@ Settings groups connections, active models and refresh, generation, tools, appea
 
 File results use a single compact list. Rows show a type icon, filename, and friendly type. Download and preview bind to the exact conversation, path, and revision. Inline validated workspace links remain in the answer. Tool activity uses compact disclosures, with all recorded calls, errors, historical permissions, budgets, and full console access retained.
 
+## Model discovery and nicknames
+
+New connections use automatic discovery from `/models`. The composer model picker lists actual API IDs. A nickname changes the display label, not the request ID, saved selection, or historical model identity. Use "Model nickname and thinking support" in the picker to save a nickname or an explicit per-model declaration.
+
+Existing nonempty manual lists stay manual until you change "Model discovery" in Connections. Manual mode is available for endpoints without `/models`. Automatic discovery failures show a clear error and any saved IDs as an unverified fallback. Refresh requests a new API check. The picker retains a historical selection that is missing from the current list rather than silently replacing it.
+
 ## Thinking
 
-Thinking controls appear only for a connection with an explicitly configured protocol. Capabilities apply to all selected models on that connection. Use separate connections for models with different support.
+The thinking button beside the model button uses the selected model's support. Resolution order is a per-model declaration, a legacy connection declaration, recognized fresh API metadata, then unknown. Generic OpenAI-compatible `/models` does not expose thinking levels. Model names, returned reasoning text, and llama.cpp thinking booleans do not prove supported levels. The app does not probe `/props` or a model router that could load models.
 
-- `none`: no thinking control or request override.
+- `none`: explicitly disables thinking overrides for that model.
 - `llama_cpp`: On/Off maps to `chat_template_kwargs.enable_thinking`.
-- `reasoning_effort`: only the configured supported levels are offered and sent as top-level `reasoning_effort`.
+- `reasoning_effort`: declared supported levels map to top-level `reasoning_effort`.
+- `openrouter_reasoning`: supported levels map to `reasoning: { "effort": "..." }`.
 
-Provider default omits the override. The current selection applies to the conversation and is retained with each response. Switching to an unsupported connection does not silently send an incompatible saved value. Use provider defaults or edit the conversation settings first.
+The OpenRouter metadata adapter reads `reasoning.supported_efforts` from `/models`. A null value uses the documented gateway effort list. Mandatory reasoning excludes `none`. Select this adapter only for a compatible endpoint. Other services need documented declarations, not guesses.
 
-The mappings follow the [llama.cpp chat completion parameters](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#post-v1chatcompletions-openai-compatible-chat-completions-api) and [OpenAI chat completion API](https://developers.openai.com/api/reference/python/resources/chat/subresources/completions/methods/create). Actual support and permitted effort levels depend on the endpoint and model. A configured declaration is not a live-model verification result.
+Provider default omits the override. The selection applies to the conversation and is retained with each response. A saved value incompatible with a newly selected model remains visible as a warning and fails before messages are committed. Select a valid level or explicitly choose Provider default. Editing another setting must not silently erase the saved thinking value.
+
+The mappings follow the [llama.cpp parameters](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#post-v1chatcompletions-openai-compatible-chat-completions-api), [OpenAI chat API](https://developers.openai.com/api/reference/python/resources/chat/subresources/completions/methods/create), and [OpenRouter reasoning controls](https://openrouter.ai/docs/guides/best-practices/reasoning-tokens). A declaration or catalog entry is not an inference check.
+
+## Connection indicators
+
+The two sidebar dots are separate. The first reports synchronization with Common Chat. The second reports the selected provider's API model listing. Green means connected, amber means checking or reconnecting, red means a failed connection or missing selected model, and gray means unknown or unverified. Each dot has a keyboard-accessible text label and hover description.
+
+Manual lists and cached results do not claim fresh API reachability. Visible online pages refresh the selected catalog about every 30 seconds. A listed model is not proof that inference or transcription will succeed.
 
 ## Native tools and future connections
 
@@ -34,6 +49,16 @@ The MCP entry point is inactive. Model Context Protocol (MCP) can connect an app
 
 ## Dictation
 
-The microphone opens dictation settings and reports that transcription is not implemented. It does not ask for microphone access, record audio, call a model, or send a chat.
+Configure a saved OpenAI-compatible speech-to-text connection and model in Settings, Dictation. This choice is independent of the chat model. The service must support `/audio/transcriptions`. A catalog listing and chat audio capability do not prove transcription support.
 
-A future implementation can send an explicitly recorded clip to a configured speech-capable endpoint and put its transcript into the unsent composer. It must preserve text typed while transcription is pending, support cancellation, release recording resources, and leave chat submission to the user. Audio attachment capability alone does not establish a dictation endpoint. Keys must remain server-side.
+1. Select the microphone button.
+2. Select Record, then Stop recording, or choose an audio file.
+3. Review the local clip.
+4. Select Transcribe to send the clip to the configured service.
+5. Edit the returned text, then use Send separately when ready.
+
+No recording timer or file selection uploads audio automatically. Send is blocked while a dictation operation or prepared clip exists. The composer stays editable. A returned transcript appends to the current typed text, not an earlier snapshot. Cancel, Close, a different draft, or sign-out aborts the local operation and prevents late insertion. Microphone tracks, timers, and local playback URLs are released.
+
+Microphone capture requires HTTPS or localhost and browser permission. Remote HTTP can use file transcription without weakening browser security. Recordings stop after 60 seconds. Each clip is limited to 10 MiB. The upstream request deadline is 60 seconds, with at most two concurrent requests per app process and a 64 KiB response limit. The server does not determine the duration of compressed uploaded files.
+
+Audio is not stored in conversations, attachments, jobs, or server files. Saved keys stay server-side. The provider receives the clip only after Transcribe and can apply its own processing, retention, and billing rules. Cancellation aborts transport and insertion. It cannot guarantee that provider processing or billing stops. See [the transcription API](API.md#dictation).

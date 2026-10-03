@@ -8,6 +8,10 @@ import { installToolControls, toolActivityHtml, generatedFilesHtml } from './too
 import { createDraftStore, DRAFT_LOGOUT_KEY } from './drafts.js';
 import { installShell } from './ui-shell.js';
 import { installThinkingControls, readThinkingCapabilities, writeThinkingCapabilities, writeThinkingSetting } from './thinking.js';
+import { installConnectionStatus } from './connection-status.js';
+import { installModelControls } from './model-controls.js';
+import { installDictationSettings } from './dictation-settings.js';
+import { installDictation } from './dictation.js';
 const $ = selector => document.querySelector(selector);
 const icons = {
   chat: '<path d="M4 4h16v12H9l-5 4V4Z"/><path d="M8 8h8M8 12h5"/>',
@@ -40,7 +44,10 @@ fillIcons();
 let draftWarning = '';
 const drafts = createDraftStore({ onWarning: message => { draftWarning = message; renderDraftStatus(); } });
 const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, draftKey: undefined, loading: false, missing: false, openReasoning: new Set(), openStats: new Set(), openTools: new Set(), authenticated: false };
-let events, toastTimer, searchTimer, listTimer, pendingCheck = false, workspaceUI, toolControls, thinkingControls, shellUI;
+const connectionStatus = installConnectionStatus();
+let syncReconnectTimer, syncDisconnectedAt = 0;
+let events, toastTimer, searchTimer, listTimer, pendingCheck = false, workspaceUI, toolControls, thinkingControls, shellUI, modelControls, dictationUI, dictationSettings;
+let composerEpoch = 0;
 let actionConversation = null, actionLoad = 0, actionReading = false, deletingConversation = null;
 const selectedProvider = () => state.providers.find(p => p.id === $('#provider-select').value);
 const routeId = () => location.hash.slice(1) || null;
@@ -52,15 +59,15 @@ const uuid = () => {
   return `${h.slice(0,8)}-${h.slice(8,12)}-${h.slice(12,16)}-${h.slice(16,20)}-${h.slice(20)}`;
 };
 class ApiError extends Error { constructor(status, message) { super(message); this.status = status; } }
-async function api(path, method = 'GET', value) {
+async function api(path, method = 'GET', value, { signal } = {}) {
   let response;
   try {
-    response = await fetch(path, { method, credentials: 'same-origin', cache: 'no-store',
+    response = await fetch(path, { method, signal, credentials: 'same-origin', cache: 'no-store',
       headers: method === 'GET' ? {} : { 'Content-Type': 'application/json', 'X-Chat-Request': '1' },
       ...(method === 'GET' ? {} : { body: JSON.stringify(value ?? {}) }) });
-  } catch { throw new ApiError(0, 'The chat server is unreachable. Your unsent draft remains on this page.'); }
+  } catch (error) { if (signal?.aborted) throw error; throw new ApiError(0, 'The chat server is unreachable. Your unsent draft remains on this page.'); }
   let data;
-  try { data = await response.json(); } catch { throw new ApiError(0, 'The server response could not be read. Check the connection.'); }
+  try { data = await response.json(); } catch (error) { if (signal?.aborted) throw error; throw new ApiError(0, 'The server response could not be read. Check the connection.'); }
   if (!response.ok) {
     if (response.status === 401 && !path.endsWith('/login')) showLogin();
     throw new ApiError(response.status, data.error ?? `Request failed with HTTP ${response.status}.`);
@@ -71,9 +78,21 @@ function toast(message) {
   clearTimeout(toastTimer); $('#toast').textContent = message; $('#toast').hidden = false;
   toastTimer = setTimeout(() => { $('#toast').hidden = true; }, 10000);
 }
+function invalidateDictation() { composerEpoch++; if (dictationUI?.isBusy()) dictationUI.cancel(); }
+function dictationSelection() {
+  const choice = state.preferences.dictation;
+  const p = state.providers.find(item => item.id === choice?.providerId);
+  return p && choice?.model ? { ...choice, name: p.name } : null;
+}
+function canDictate() {
+  return state.authenticated && !state.busy && !state.loading && !state.missing && !state.retry && !editTargetMissing()
+    && state.draftKey !== undefined && (!state.draftKey || state.conversation?.id === state.draftKey);
+}
 function showLogin() {
-  state.authenticated = false; events?.close(); cancelDiagrams(); cancelPreviews();
-  workspaceUI?.close(); toolControls?.clear(); thinkingControls?.close(); shellUI?.closePopups();
+  invalidateDictation();
+  state.authenticated = false; events?.close(); clearTimeout(syncReconnectTimer); cancelDiagrams(); cancelPreviews();
+  connectionStatus.sync('unknown', 'sign in required.'); connectionStatus.clear();
+  workspaceUI?.close(); toolControls?.clear(); thinkingControls?.close(); shellUI?.closePopups(); modelControls?.clear();
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('#app').hidden = true; $('#login-screen').hidden = false; $('#password').focus();
 }
@@ -92,6 +111,7 @@ function rememberDraft() {
   return true;
 }
 function restoreDraft(cid) {
+  invalidateDictation();
   state.draftKey = cid; state.missing = false;
   const draft = drafts.get(cid) ?? {};
   $('#prompt').value = draft.text ?? ''; state.attachments = draft.attachments ?? []; state.editing = draft.editing ?? null; state.retry = draft.retry ?? null;
@@ -135,14 +155,14 @@ function renderDraft() {
   renderDraftStatus(); updateControls();
 }
 function updateControls() {
-  toolControls?.refresh(); thinkingControls?.refresh(); updateMediaHints(selectedProvider());
+  toolControls?.refresh(); thinkingControls?.refresh(); dictationUI?.refresh(); modelControls?.refresh(); updateMediaHints(selectedProvider());
   const unavailable = state.loading || state.missing || !!state.draftKey && state.conversation?.id !== state.draftKey;
   const running = !!state.conversation?.activeJob || state.conversation?.messages.some(m => m.status === 'streaming');
   const locked = state.busy || state.loading || !!state.retry;
   $('#stop').hidden = !running;
   $('#stop').disabled = !state.conversation?.activeJob || state.busy;
   $('#send').hidden = running && !state.retry;
-  $('#send').disabled = state.busy || state.loading || (!state.retry && (unavailable || editTargetMissing() || state.attachments.some(a => a.missing) || running || !selectedProvider() || !$('#model-input').value.trim() || (!$('#prompt').value.trim() && !state.attachments.length)));
+  $('#send').disabled = dictationUI?.isBusy() || state.busy || state.loading || (!state.retry && (unavailable || editTargetMissing() || state.attachments.some(a => a.missing) || running || !selectedProvider() || !$('#model-input').value.trim() || (!$('#prompt').value.trim() && !state.attachments.length)));
   const sendLabel = state.retry ? 'Retry send' : 'Send';
   $('#send').innerHTML = icon('send'); $('#send').title = sendLabel; $('#send').setAttribute('aria-label', sendLabel);
   $('#new-chat').disabled = state.busy || !!state.retry;
@@ -150,8 +170,10 @@ function updateControls() {
   $('#prompt').disabled = state.busy || !!state.retry;
   $('#provider-select').disabled = locked; $('#model-input').disabled = locked; $('#model-button').disabled = locked;
   const model = $('#model-input').value.trim();
-  $('#model-button').title = model ? `Model: ${model}` : 'Select model';
-  $('#model-button').setAttribute('aria-label', $('#model-button').title); $('#active-model').textContent = model || 'Not selected';
+  connectionStatus.select(selectedProvider()?.id, model);
+  const displayModel = modelControls?.label() ?? model;
+  $('#model-button').title = model ? `Model: ${displayModel} (${model})` : 'Select model';
+  $('#model-button').setAttribute('aria-label', $('#model-button').title); $('#active-model').textContent = displayModel || 'Not selected';
   $('#refresh-models').disabled = locked || !selectedProvider(); $('#settings-model-button').disabled = locked;
   $('#generation-button').disabled = locked || unavailable || running;
   const generationLocked = locked || unavailable || running || !selectedProvider();
@@ -289,6 +311,7 @@ async function loadCurrent(forceBottom = false) {
   }
   if (!state.authenticated || cid !== routeId() || cid !== state.draftKey) return;
   if (state.conversation?.id === cid && state.conversation.version > c.version) return;
+  if (state.conversation?.id === cid && state.conversation.activeLeaf !== c.activeLeaf) invalidateDictation();
   state.conversation = c; state.missing = false; renderThread(forceBottom); renderList(); renderDraft();
   workspaceUI?.refresh();
 }
@@ -321,6 +344,7 @@ async function createConversation() {
   const draft = currentDraft();
   // Save the destination before removing the new-chat slot. Never migrate on a refresh.
   if (drafts.set(c.id, draft)) drafts.delete(previousKey, draft);
+  invalidateDictation();
   history.pushState(null, '', `#${c.id}`); state.conversation = c; state.draftKey = c.id;
   toolControls?.created(c.id); return c;
 }
@@ -338,16 +362,9 @@ async function refreshProviders() {
   if ($('#empty-state')) renderThread();
   updateControls();
 }
-async function loadModels(notify = true) {
-  const p = selectedProvider(); if (!p) { $('#model-options').innerHTML = ''; return; }
-  try {
-    const { models } = await api(`/api/providers/${encodeURIComponent(p.id)}/models`);
-    if (selectedProvider()?.id !== p.id) return;
-    $('#model-options').innerHTML = models.map(m => `<option value="${esc(m)}"></option>`).join('');
-    if (!$('#model-input').value && models.length) $('#model-input').value = models[0];
-    updateControls();
-    if (notify) toast(`${models.length} model names loaded.`);
-  } catch (e) { if (notify) toast(`${e.message} You can enter a model name directly.`); }
+async function loadModels(notify = true, refresh = notify) {
+  const p = selectedProvider(); if (p) connectionStatus.checking(p.id);
+  return modelControls.load(notify, refresh);
 }
 async function saveSelection() {
   try { state.preferences = await api('/api/preferences', 'PUT', { providerId: $('#provider-select').value, model: $('#model-input').value.trim() }); }
@@ -374,8 +391,8 @@ async function checkPending() {
 }
 async function sendMessage(event) {
   event?.preventDefault();
-  if (state.busy || !state.retry && $('#send').disabled) return;
-  state.busy = true; updateControls();
+  if (state.busy || dictationUI?.isBusy() || !state.retry && $('#send').disabled) return;
+  invalidateDictation(); state.busy = true; updateControls();
   let pending = state.retry;
   try {
     if (!pending) {
@@ -400,7 +417,7 @@ async function regenerate(messageId) {
   if (state.busy || state.retry || !state.conversation || state.conversation.activeJob) return;
   const c = state.conversation, m = c.messages.find(m => m.id === messageId);
   if (!m?.parentId) return;
-  state.busy = true; updateControls();
+  invalidateDictation(); state.busy = true; updateControls();
   try {
     const providerId = $('#provider-select').value, model = $('#model-input').value.trim();
     const pending = { cid: c.id, body: { requestId: uuid(), expectedVersion: c.version, providerId,
@@ -416,7 +433,7 @@ async function regenerate(messageId) {
 }
 async function selectBranch(messageId) {
   if (state.busy || state.retry || state.conversation?.activeJob) return;
-  cancelPreviews();
+  invalidateDictation(); cancelPreviews();
   const c = state.conversation; let leaf = messageId, seen = new Set();
   while (!seen.has(leaf)) {
     seen.add(leaf);
@@ -433,6 +450,7 @@ function beginEdit(mid) {
   const m = state.conversation.messages.find(m => m.id === mid);
   if (!m) return;
   if (($('#prompt').value.trim() || state.attachments.length) && !confirm('Replace the unsent draft with this message?')) return;
+  invalidateDictation();
   state.editing = { id: m.id, parentId: m.parentId }; $('#prompt').value = m.content;
   state.attachments = m.attachments.map(a => ({ ...a, existing: true })); rememberDraft(); renderDraft(); $('#prompt').focus();
 }
@@ -466,6 +484,9 @@ function fillConnectionForm() {
   $('#connection-key').value = ''; $('#connection-clear-key').checked = false;
   $('#connection-key').placeholder = p?.hasKey ? 'A key is saved. Leave blank to keep it.' : 'Optional API key';
   $('#connection-models').value = p?.models.join('\n') ?? '';
+  $('#connection-discovery').value = p?.modelConfig?.discovery ?? (p?.models.length ? 'manual' : 'auto');
+  $('#connection-metadata').value = p?.modelConfig?.metadata ?? 'generic';
+  $('#connection-models-field').hidden = $('#connection-discovery').value !== 'manual';
   for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens','llamaCppTimings']) $('#cap-'+key).checked = p ? p.capabilities[key] === true : !['vision','llamaCppTimings'].includes(key);
   $('#cap-tools').checked = p?.capabilities.tools === true;
   writeMediaCapabilities(p?.capabilities); writeThinkingCapabilities(p?.capabilities);
@@ -482,7 +503,9 @@ async function saveProvider(event) {
   try {
     const p = await api(pid ? `/api/providers/${pid}` : '/api/providers', pid ? 'PUT' : 'POST', {
       name: $('#connection-name').value, baseUrl: $('#connection-url').value, apiKey: $('#connection-key').value,
-      clearKey: $('#connection-clear-key').checked, models: $('#connection-models').value.split('\n').map(s => s.trim()).filter(Boolean), capabilities
+      clearKey: $('#connection-clear-key').checked, models: $('#connection-models').value.split('\n').map(s => s.trim()).filter(Boolean), capabilities,
+      modelConfig: { discovery: $('#connection-discovery').value, metadata: $('#connection-metadata').value,
+        profiles: state.providers.find(item => item.id === pid)?.modelConfig?.profiles ?? [] }
     });
     $('#connection-key').value = ''; await refreshProviders(); $('#provider-select').value = p.id;
     $('#model-input').value = p.models[0] ?? ''; shellUI.closeSettings();
@@ -523,7 +546,7 @@ async function saveGeneration(event) {
 }
 async function changeThinking(value) {
   if (state.busy || state.loading || state.missing || state.retry || state.conversation?.activeJob) throw new Error('Finish the current chat action before changing thinking.');
-  state.busy = true; updateControls();
+  invalidateDictation(); state.busy = true; updateControls();
   try {
     const c = state.conversation ?? await createConversation(), settings = { ...c.settings };
     if (value) settings.thinking = value; else delete settings.thinking;
@@ -629,24 +652,39 @@ async function refreshActionActivity(cid) {
   actionConversation = { ...target, activeJob: latest.activeJob, messages: latest.messages };
   updateConversationActions();
 }
-function setSyncStatus(message) { $('#sync-status').textContent = message; $('.server-status').title = message; }
+function setSyncStatus(message, status = 'checking') { connectionStatus.sync(status, message); }
 function connectEvents() {
-  events?.close(); events = new EventSource('/api/events');
-  events.onopen = () => { setSyncStatus('Connected to server'); };
+  events?.close(); clearTimeout(syncReconnectTimer); syncReconnectTimer = undefined; syncDisconnectedAt = 0;
+  events = new EventSource('/api/events');
+  const source = events;
+  setSyncStatus('connecting.');
+  events.onopen = () => { clearTimeout(syncReconnectTimer); syncReconnectTimer = undefined; syncDisconnectedAt = 0; setSyncStatus('connected and synchronizing.', 'connected'); };
   events.onerror = () => {
-    setSyncStatus('Reconnecting to server');
-    api('/api/session').catch(() => {});
+    if (!syncDisconnectedAt) syncDisconnectedAt = Date.now();
+    const disconnected = Date.now() - syncDisconnectedAt >= 15000;
+    setSyncStatus(disconnected ? 'synchronization disconnected.' : 'reconnecting.', disconnected ? 'error' : 'checking');
+    if (!disconnected && !syncReconnectTimer) syncReconnectTimer = setTimeout(() => {
+      syncReconnectTimer = undefined;
+      if (state.authenticated && events === source && source.readyState !== EventSource.OPEN) setSyncStatus('synchronization disconnected.', 'error');
+    }, Math.max(0, 15000 - (Date.now() - syncDisconnectedAt)));
+    api('/api/session').catch(error => {
+      if (state.authenticated && events === source && source.readyState !== EventSource.OPEN && error.status !== 401) setSyncStatus('unreachable.', 'error');
+    });
   };
   events.onmessage = async event => {
     try {
       const change = JSON.parse(event.data);
       if (change.type === 'hello') {
         await Promise.all([refreshList(), refreshProviders(), loadCurrent()]); checkPending();
-      } else if (change.type === 'providers') { await refreshProviders(); await loadModels(false); }
-      else if (change.type === 'preferences') { const session = await api('/api/session'); state.preferences = session.settings; applyTheme(); }
+      } else if (change.type === 'providers') { invalidateDictation(); await refreshProviders(); await loadModels(false); }
+      else if (change.type === 'preferences') {
+        const session = await api('/api/session');
+        if (JSON.stringify(state.preferences.dictation) !== JSON.stringify(session.settings.dictation)) invalidateDictation();
+        state.preferences = session.settings; applyTheme(); dictationUI?.refresh();
+      }
       else if (change.type === 'deleted') {
         if (change.conversationId === state.draftKey && change.conversationId !== deletingConversation) {
-          cancelPreviews(); state.conversation = null; state.missing = true; renderThread(); renderDraft();
+          invalidateDictation(); cancelPreviews(); state.conversation = null; state.missing = true; renderThread(); renderDraft();
           toast('This conversation was deleted on another device. Your draft is kept at this address.');
         }
         if (change.conversationId === actionConversation?.id && change.conversationId !== deletingConversation) {
@@ -698,9 +736,16 @@ $('#conversation-list').addEventListener('click', event => {
   if (action) { openConversationActions(action.dataset.chatActions); return; }
   const b = event.target.closest('[data-conversation]'); if (b) navigate(b.dataset.conversation);
 });
+window.addEventListener('offline', () => {
+  clearTimeout(syncReconnectTimer); setSyncStatus('browser reports offline.', 'error');
+  const p = selectedProvider(); if (p) connectionStatus.error(p.id, 'browser reports offline.');
+});
+window.addEventListener('online', () => { if (state.authenticated) { connectEvents(); checkPending(); loadModels(false, true); } });
+setInterval(() => { if (state.authenticated && !document.hidden && !state.busy && navigator.onLine) loadModels(false, true); }, 30000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.authenticated && navigator.onLine) loadModels(false); });
 $('#provider-select').addEventListener('change', async () => { $('#model-input').value = ''; updateControls(); await loadModels(false); saveSelection(); updateControls(); });
-$('#model-input').addEventListener('input', updateControls);
-$('#model-input').addEventListener('change', saveSelection);
+$('#picker-refresh-models').addEventListener('click', () => loadModels());
+$('#connection-discovery').addEventListener('change', () => { $('#connection-models-field').hidden = $('#connection-discovery').value !== 'manual'; });
 $('#refresh-models').addEventListener('click', () => loadModels());
 $('#connections-button').addEventListener('click', openConnections);
 $('#connection-form').addEventListener('submit', saveProvider);
@@ -716,7 +761,7 @@ $('#reset-generation').addEventListener('click', () => { for (const s of ['#syst
 $('#preferences-button').addEventListener('click', () => openPreferences());
 $('#settings-model-button').addEventListener('click', event => { event.stopPropagation(); thinkingControls?.close(); shellUI.openModel(); });
 $('#model-info-button').addEventListener('click', () => openPreferences('info'));
-$('#dictation-button').addEventListener('click', () => openPreferences('dictation'));
+$('#dictation-button').addEventListener('click', () => { thinkingControls?.close(); shellUI.closePopups(); dictationUI.open(); });
 $('#menu-tool-settings').addEventListener('click', () => openPreferences('tools'));
 function openWorkspace() {
   thinkingControls?.close(); shellUI.closePopups(); shellUI.closeSettings();
@@ -730,6 +775,7 @@ $('#theme-select').addEventListener('change', async () => {
   catch(e) { toast(e.message); }
 });
 function clearDraftView() {
+  invalidateDictation();
   state.conversation = null; state.attachments = []; state.editing = null; state.retry = null; state.draftKey = undefined;
   state.loading = false; state.missing = false;
   $('#prompt').value = ''; $('#thread').innerHTML = ''; $('#conversation-list').innerHTML = ''; showLogin();
@@ -766,6 +812,7 @@ $('#attachment-list').addEventListener('click', async event => {
 });
 $('#cancel-edit').addEventListener('click', () => {
   if (state.busy || state.retry || !confirm('Discard this unsent draft, including its edit and attachment references? Uploaded files stay on the server.')) return;
+  invalidateDictation();
   drafts.delete(state.draftKey, currentDraft()); state.editing = null; state.attachments = []; $('#prompt').value = ''; renderDraft();
 });
 $('#stop').addEventListener('click', async () => { try { if (state.conversation?.activeJob) await api(`/api/jobs/${state.conversation.activeJob.id}/cancel`, 'POST'); } catch (e) { toast(e.message); } });
@@ -840,7 +887,6 @@ $('#sidebar-backdrop').addEventListener('click', () => $('#app').classList.remov
 installSidebarGestures($('#app'), $('#sidebar'));
 document.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => b.closest('dialog').close()));
 window.addEventListener('hashchange', () => { if (state.authenticated) navigate(routeId()); });
-window.addEventListener('online', () => { if (state.authenticated) { connectEvents(); checkPending(); } });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.authenticated) { loadCurrent().catch(() => {}); refreshList().catch(() => {}); checkPending(); } });
 document.addEventListener('keydown', event => {
   if (!state.authenticated || document.querySelector('dialog[open]')) return;
@@ -850,16 +896,35 @@ document.addEventListener('keydown', event => {
 window.addEventListener('storage', event => {
   if (event.key === DRAFT_LOGOUT_KEY && event.newValue) { drafts.forget(); clearDraftView(); }
 });
+window.addEventListener('pagehide', invalidateDictation);
 window.addEventListener('beforeunload', event => {
   rememberDraft();
   if (drafts.hasUnsaved || state.busy) { event.preventDefault(); event.returnValue = ''; }
 });
 shellUI = installShell({ onSettingsTab: tab => {
   if (tab === 'generation') fillGenerationForm();
+  else if (tab === 'dictation') dictationSettings?.fill();
   else { updateControls(); if (tab === 'tools') toolControls?.checkRuntime(); }
 } });
 installMediaControls();
-thinkingControls = installThinkingControls({ getProvider: selectedProvider, getSettings: () => state.conversation?.settings ?? {},
+modelControls = installModelControls({ api, getProvider: selectedProvider,
+  onCatalog: (pid, result) => connectionStatus.models(pid, result),
+  onChange: save => { updateControls(); if (save) saveSelection(); },
+  onSaved: p => { const index = state.providers.findIndex(item => item.id === p.id); if (index >= 0) state.providers[index] = p; },
+  busy: () => state.busy || state.loading || !!state.retry, toast });
+dictationUI = installDictation({ transcribe: (input, options) => api('/api/transcriptions', 'POST', input, options),
+  getSelection: dictationSelection, getTarget: () => ({ draftKey: state.draftKey, epoch: composerEpoch, authenticated: state.authenticated }),
+  canUse: canDictate, appendTranscript: (text, target) => {
+    if (!canDictate() || !target.authenticated || target.draftKey !== state.draftKey || target.epoch !== composerEpoch) return false;
+    const current = $('#prompt').value;
+    $('#prompt').value = current + (current && !/\s$/.test(current) ? '\n' : '') + text;
+    rememberDraft(); renderDraft(); return true;
+  }, onStateChange: updateControls, openSettings: () => openPreferences('dictation'), toast });
+dictationSettings = installDictationSettings({ api, catalog: (pid, options) => modelControls.catalog(pid, options),
+  getProviders: () => state.providers, getSelection: () => state.preferences.dictation,
+  onSaved: preferences => { invalidateDictation(); state.preferences = preferences; dictationUI.refresh(); dictationSettings.fill(); }, openConnections, toast });
+thinkingControls = installThinkingControls({ getProvider: selectedProvider, getModel: () => $('#model-input').value,
+  getDetails: () => modelControls.details(), getSettings: () => state.conversation?.settings ?? {},
   onChange: changeThinking, busy: () => state.busy || state.loading || state.missing || !!state.retry || !!state.conversation?.activeJob, toast });
 toolControls = installToolControls({ api, getProvider: selectedProvider, getConversation: () => state.conversation,
   busy: () => state.busy || state.loading || !!state.retry || !!state.conversation?.activeJob });

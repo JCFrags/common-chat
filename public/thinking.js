@@ -48,7 +48,7 @@ export function installThinkingControls({ getProvider, getModel = () => '', getD
   const menu = document.createElement('div'); menu.id = 'thinking-menu'; menu.className = 'composer-popover thinking-menu'; menu.hidden = true;
   menu.setAttribute('role', 'menu'); menu.setAttribute('aria-label', 'Thinking level');
   button?.parentElement.append(menu);
-  let optionsKey = '', changing = false;
+  let optionsKey = '', menuKey = '', changing = false;
   function close() { menu.hidden = true; button?.setAttribute('aria-expanded', 'false'); }
   function refresh() {
     const provider = getProvider(), model = getModel(), thinking = modelThinkingCapabilities(provider, model, getDetails());
@@ -70,11 +70,14 @@ export function installThinkingControls({ getProvider, getModel = () => '', getD
       writeThinkingSetting({ thinking: current });
       optionsKey = key;
     }
-    menu.replaceChildren(...['', ...options].map(level => {
-      const item = document.createElement('button'); item.type = 'button'; item.className = 'ghost'; item.dataset.thinking = level;
-      item.setAttribute('role', 'menuitemradio'); item.setAttribute('aria-checked', String(level === current));
-      item.textContent = level ? labels[level] : 'Provider default'; return item;
-    }));
+    if (key !== menuKey) {
+      menu.replaceChildren(...['', ...options].map(level => {
+        const item = document.createElement('button'); item.type = 'button'; item.className = 'ghost'; item.dataset.thinking = level;
+        item.setAttribute('role', 'menuitemradio'); item.setAttribute('aria-checked', String(level === current));
+        item.textContent = level ? labels[level] : 'Provider default'; return item;
+      }));
+      menuKey = key;
+    }
     if (button.hidden || changing || busy()) close();
   }
   button?.addEventListener('click', () => {

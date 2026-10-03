@@ -80,7 +80,7 @@ export function installShell({ onSettingsTab = () => {} } = {}) {
   function openModel() {
     if (model.disabled) return;
     closeUploadMenu(); closeSettings();
-    picker.hidden = false; model.setAttribute('aria-expanded', 'true'); $('#model-input').focus();
+    picker.hidden = false; model.setAttribute('aria-expanded', 'true'); $('#model-select').focus();
   }
   function openUploadMenu() {
     if (attach.disabled) return;
@@ -132,7 +132,7 @@ export function installShell({ onSettingsTab = () => {} } = {}) {
   $('#close-model-picker').addEventListener('click', () => closeModel(true));
   picker.addEventListener('keydown', event => {
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeModel(true); }
-    if (event.key === 'Enter' && event.target === $('#model-input')) {
+    if (event.key === 'Enter' && event.target === $('#model-select')) {
       event.preventDefault(); event.target.dispatchEvent(new Event('change', { bubbles: true })); closeModel(true);
     }
   });

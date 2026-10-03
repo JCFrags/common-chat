@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/workspace.css">
   <link rel="stylesheet" href="/tool-presentation.css">
+  <link rel="stylesheet" href="/dictation.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -40,7 +41,10 @@
       <nav id="conversation-list" aria-label="Conversations"></nav>
       <div class="sidebar-footer">
         <button class="ghost icon" id="preferences-button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="preferences-dialog" data-icon="settings"></button>
-        <div class="server-status" title="Connecting to server"><span class="status-dot" aria-hidden="true"></span><span id="sync-status" class="sr-only" role="status">Connecting</span></div>
+        <div class="connection-indicators" aria-label="Connection status">
+          <div id="server-connection-status" class="connection-status server-status" data-state="checking" tabindex="0" title="Common Chat server: connecting"><span class="status-dot" aria-hidden="true"></span><span id="sync-status" class="sr-only" role="status">Common Chat server: connecting</span></div>
+          <div id="model-connection-status" class="connection-status" data-state="unknown" tabindex="0" title="Model API: not checked yet"><span class="status-dot" aria-hidden="true"></span><span id="model-status" class="sr-only" role="status">Model API: not checked yet</span></div>
+        </div>
       </div>
     </aside>
     <main id="main">
@@ -71,7 +75,7 @@
                     </div>
                   </div>
                 </div>
-                <button type="button" class="ghost icon" id="dictation-button" aria-label="Dictation settings, not implemented" title="Dictation settings (not implemented)" data-icon="microphone"></button>
+                <button type="button" class="ghost icon" id="dictation-button" aria-label="Dictate or transcribe audio" title="Dictate or transcribe audio" data-icon="microphone"></button>
                 <button type="button" class="ghost icon" id="cancel-edit" aria-label="Discard draft" title="Discard draft" data-icon="close" hidden></button>
               </div>
               <div class="row composer-end">
@@ -84,10 +88,22 @@
           </form>
           <div id="model-controls" class="model-picker shell-popover" role="dialog" aria-labelledby="model-picker-title" hidden>
             <div class="row spread"><h3 id="model-picker-title">Model</h3><button type="button" class="ghost icon" id="close-model-picker" aria-label="Close model picker" title="Close model picker" data-icon="close"></button></div>
-            <label class="field" for="model-input">Model name</label>
-            <input id="model-input" list="model-options" placeholder="Select or enter a model" aria-label="Model name" autocomplete="off">
-            <datalist id="model-options"></datalist>
-            <div class="row model-picker-actions"><button type="button" class="ghost icon" id="connections-button" aria-label="Connection settings" title="Connection settings" data-icon="plug"></button><button type="button" class="ghost icon" id="model-info-button" aria-label="Model and connection help" title="Model and connection help" data-icon="info"></button></div>
+            <label class="field" for="model-select">Available models</label>
+            <select id="model-select" aria-label="Available models"><option value="">Select a connection first</option></select>
+            <input id="model-input" type="hidden">
+            <p id="model-catalog-status" class="small" role="status"></p>
+            <p id="model-id" class="small"></p>
+            <details class="settings-help"><summary>Model nickname and thinking support</summary>
+              <form id="model-profile-form" class="stack">
+                <label class="field">Nickname<input id="model-nickname" maxlength="100" placeholder="Optional display name" autocomplete="off"><small>Requests and saved history keep the actual model ID.</small></label>
+                <label class="field">Thinking protocol<select id="model-thinking-protocol"><option value="inherit">Automatic or connection declaration</option><option value="none">No thinking override supported</option><option value="llama_cpp">llama.cpp on/off</option><option value="reasoning_effort">OpenAI reasoning effort</option><option value="openrouter_reasoning">OpenRouter reasoning effort</option></select></label>
+                <label id="model-thinking-levels-field" class="field" hidden>Supported effort levels<input id="model-thinking-levels" placeholder="low, medium, high" autocomplete="off"><small>Declare only documented levels: none, minimal, low, medium, high, xhigh, max. A model name does not prove support.</small></label>
+                <p id="model-thinking-source" class="small"></p>
+                <p id="model-profile-error" class="error" role="alert"></p>
+                <button type="submit" id="model-profile-save" class="ghost">Save model display and support</button>
+              </form>
+            </details>
+            <div class="row model-picker-actions"><button type="button" class="ghost icon" id="connections-button" aria-label="Connection settings" title="Connection settings" data-icon="plug"></button><button type="button" class="ghost icon" id="picker-refresh-models" aria-label="Refresh available models" title="Refresh available models" data-icon="refresh"></button><button type="button" class="ghost icon" id="model-info-button" aria-label="Model and connection help" title="Model and connection help" data-icon="info"></button></div>
           </div>
           <div class="composer-footer" role="status" hidden></div>
         </div>
@@ -122,7 +138,9 @@
             <div class="form-grid"><label class="field">Name<input id="connection-name" required placeholder="Local model server" maxlength="100"></label><label class="field">Base URL<input id="connection-url" type="url" required placeholder="http://localhost:8080/v1"></label></div>
             <label class="field">API key<input id="connection-key" type="password" autocomplete="new-password" placeholder="Optional. Leave blank to keep the saved key."><small>Saved keys are encrypted on the server and are never returned to the browser.</small></label>
             <label class="check"><input id="connection-clear-key" type="checkbox">Remove the saved API key</label>
-            <label class="field">Model names<textarea id="connection-models" rows="2" placeholder="One model per line. Leave empty to use the /models endpoint."></textarea></label>
+            <label class="field">Model discovery<select id="connection-discovery"><option value="auto">Automatic from the API</option><option value="manual">Manual IDs for endpoints without discovery</option></select><small>Automatic mode requests /models. Existing manual lists stay manual until you change this setting.</small></label>
+            <label id="connection-models-field" class="field" hidden>Manual model IDs<textarea id="connection-models" rows="2" placeholder="One API model ID per line"></textarea><small>Manual mode does not verify API availability.</small></label>
+            <label class="field">Model metadata<select id="connection-metadata"><option value="generic">Generic OpenAI-compatible API</option><option value="openrouter">OpenRouter reasoning metadata</option></select><small>Use the OpenRouter adapter only for a compatible service. Generic /models does not expose thinking levels.</small></label>
             <fieldset><legend>Enabled capabilities</legend><div class="checks">
               <label class="check"><input id="cap-streaming" type="checkbox" checked>Streaming</label>
               <label class="check"><input id="cap-llamaCppTimings" type="checkbox">Live llama.cpp statistics (llama.cpp only)</label>
@@ -163,8 +181,17 @@
           <div id="native-tools-panel"></div>
         </section>
         <section id="settings-dictation-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-dictation-tab" data-settings-panel="dictation" tabindex="0" hidden>
-          <h3>Dictation</h3><p class="small">Dictation is not implemented. This button opens settings only. Common Chat does not record, transcribe, or send microphone audio.</p>
-          <label class="field">Dictation service<select id="dictation-service" disabled><option>Not implemented</option></select></label>
+          <h3>Dictation</h3>
+          <p class="small">Select a saved connection that supports OpenAI-compatible /audio/transcriptions. This service is separate from the chat model. Audio is sent only when you click Transcribe. The transcript stays unsent in the composer.</p>
+          <form id="dictation-settings-form" class="stack">
+            <label class="field">Transcription connection<select id="dictation-provider"><option value="">Not configured</option></select></label>
+            <label class="field">Transcription model<select id="dictation-model"><option value="">Select a connection first</option></select><small>Model IDs come from the API. A model list does not prove transcription support. Choose a speech-to-text model supported by this service.</small></label>
+            <p id="dictation-model-status" class="small" role="status"></p>
+            <div class="row"><button type="button" id="dictation-connections" class="ghost">Manage connections</button><button type="button" id="dictation-refresh-models" class="ghost icon" aria-label="Refresh transcription models" title="Refresh transcription models" data-icon="refresh"></button></div>
+            <p id="dictation-settings-error" class="error" role="alert"></p>
+            <div class="dialog-footer"><button type="button" id="dictation-disable" class="ghost">Disable dictation</button><button type="submit" id="dictation-save" class="ghost icon" aria-label="Save dictation service" title="Save dictation service" data-icon="check"></button></div>
+          </form>
+          <p class="small">Microphone recording requires HTTPS or localhost and browser permission. Audio-file transcription also works on HTTP. Clips stay in this page until transcription or cancellation. Recording stops after 60 seconds. Files must not exceed 10 MiB.</p>
         </section>
         <section id="settings-mcp-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-mcp-tab" data-settings-panel="mcp" tabindex="0" hidden>
           <h3>MCP</h3><p class="small">Model Context Protocol (MCP) integration is not implemented. No MCP servers are connected. No MCP tools are granted to a model.</p>
@@ -180,7 +207,7 @@
         </section>
         <section id="settings-info-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-info-tab" data-settings-panel="info" tabindex="0" hidden>
           <section><h3>About</h3><p class="small" id="release-info">Common Chat 0.2 preview.</p><p class="small">A standalone implementation with theme tokens adapted from llama.cpp. An administrator applies updates while the server is idle.</p></section>
-          <section><h3>Composer</h3><p class="small">Enter sends a message. Shift+Enter adds a line. The model icon selects a model. The paperclip opens Upload and Tools. On supported connections, native tools are available automatically. Execution needs a ready runner. Availability is checked before each turn. Manual review and Run stay separate. The microphone opens the inactive Dictation settings.</p><p class="small">Drafts are saved only in this browser. History is stored on this server. Review model output before use. Sign out clears drafts for this server in the current browser.</p></section>
+          <section><h3>Composer</h3><p class="small">Enter sends a message. Shift+Enter adds a line. The model icon selects a model. The paperclip opens Upload and Tools. On supported connections, native tools are available automatically. Execution needs a ready runner. Availability is checked before each turn. Manual review and Run stay separate. The microphone opens recording or audio-file transcription. Configure a separate service in Dictation settings. Transcripts stay unsent.</p><p class="small">Drafts are saved only in this browser. History is stored on this server. Review model output before use. Sign out clears drafts for this server in the current browser.</p></section>
           <section><h3>Connections and uploads</h3><p class="small">The chat server reaches the model endpoint. The base URL usually ends in /v1. API keys stay on the server. Choose capabilities only when the endpoint and model support them.</p><p id="media-input-hint" class="small"></p><p class="small">Attach at most ten files per message. Each file must not exceed 10 MiB. Audio/video need explicit compatible input protocols and server inspection.</p></section>
           <section><h3>Files and recovery</h3><p class="small">Workspace files are separate from message attachments. File and code editor buffers remain in this page. Save or copy those edits before reloading. Conversation exports do not replace a full offline backup.</p><p class="small">A response continues if this browser disconnects. A server crash interrupts generation. Saved partial output remains, but generation does not resume automatically.</p></section>
         </section>

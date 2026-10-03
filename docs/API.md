@@ -19,11 +19,13 @@ When supplied, `Origin` must equal `PUBLIC_URL`. Host validation also applies to
 | POST | `/api/login` | Submit `{ "password": "..." }` and receive a session cookie. |
 | GET | `/api/session` | Read account preferences and loaded release identity. See [release metadata](RELEASES.md). |
 | POST | `/api/logout` | Delete the current session. |
-| PUT | `/api/preferences` | Save theme, selected provider ID, or model. |
+| PUT | `/api/preferences` | Save theme, selected chat provider/model, or atomic dictation selection. |
 | GET | `/api/events` | Subscribe to server changes. |
 | GET, POST | `/api/providers` | List or create model connections. |
 | PUT, DELETE | `/api/providers/:id` | Replace or delete a connection. |
-| GET | `/api/providers/:id/models` | Read configured or discovered model names. |
+| GET | `/api/providers/:id/models` | Read model IDs and display/thinking details. `?refresh=1` requests a fresh check. |
+| PATCH | `/api/providers/:id/models` | Save one model nickname or thinking declaration without changing keys or other connection fields. |
+| POST | `/api/transcriptions` | Transcribe an ephemeral audio clip using the saved dictation selection. |
 | GET, POST | `/api/conversations` | Search or create conversations. Search uses `?q=...`. |
 | GET, PATCH, DELETE | `/api/conversations/:id` | Read, edit, or delete a conversation. |
 | POST | `/api/conversations/:id/generate` | Commit a submission and start a server-owned job. |
@@ -56,7 +58,8 @@ Workspace route shapes and revision rules are defined in [WORKSPACE.md](WORKSPAC
   "name": "Local model server",
   "baseUrl": "http://127.0.0.1:8080/v1",
   "apiKey": "",
-  "models": ["model-name"],
+  "models": [],
+  "modelConfig": { "discovery": "auto", "metadata": "generic", "profiles": [] },
   "capabilities": {
     "streaming": true,
     "llamaCppTimings": false,
@@ -81,9 +84,38 @@ An empty key on update retains the saved key. `clearKey: true` removes it. Conne
 
 `capabilities.audioInput` and `capabilities.videoInput` accept only `none` or `llama_cpp`, with `none` as the default. These are independent of vision, tools, and statistics. Enable them only when the endpoint and selected model support the native input. See [MEDIA.md](MEDIA.md) for exact payloads, codec checks, and branch limits.
 
-`capabilities.thinking` accepts `none` (default), `llama_cpp`, or `reasoning_effort`. The latter also requires `thinkingLevels`, a nonempty supported subset of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Configure only values supported by every model on that connection. Do not infer support from a model name, vision, or returned reasoning.
+Legacy `capabilities.thinking` accepts `none` (default), `llama_cpp`, `reasoning_effort`, or `openrouter_reasoning`. Effort protocols require `thinkingLevels`, a nonempty supported subset of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Per-model declarations take precedence over the connection declaration. Do not infer support from names, vision, or returned reasoning.
 
-Omitted `settings.thinking` sends no override. With `llama_cpp`, `on` or `off` sends `chat_template_kwargs: { "enable_thinking": true or false }`. With `reasoning_effort`, a configured level sends top-level `reasoning_effort`. A mismatched or unsupported value fails before messages are saved. The selected value stays in the response's settings. No existing connection is enabled automatically. See [thinking controls](INTERFACE.md#thinking).
+Omitted `settings.thinking` sends no override. With `llama_cpp`, `on` or `off` sends `chat_template_kwargs: { "enable_thinking": true or false }`. With `reasoning_effort`, a supported level sends top-level `reasoning_effort`. With `openrouter_reasoning`, it sends `reasoning: { "effort": "..." }`. A mismatched or unsupported value fails before messages are saved. The selected value stays in the response's settings. See [thinking controls](INTERFACE.md#thinking).
+
+## Model catalogs and profiles
+
+`modelConfig.discovery` is `auto` or `manual`. Omitted configuration preserves an existing connection's model configuration on PUT. Older nonempty `models` lists infer manual mode. Empty lists infer automatic mode. Automatic mode calls `/models` even when saved IDs exist. It does not replace the saved manual list. An API failure can return saved IDs with a clear unverified fallback state.
+
+`modelConfig.metadata` is `generic` (default) or `openrouter`. The latter recognizes compatible `/models` reasoning metadata. The exact OpenRouter endpoint is also recognized. Generic `/models` does not enumerate thinking levels.
+
+GET returns the backward-compatible `models: string[]` plus `details: [{ id, name?, nickname?, thinking: { protocol, levels, source } }]`. It also returns `reachable`, `source`, `checkedAt`, and `catalogState`, with an optional sanitized `error`.
+
+| Result | reachable | source | catalogState |
+| --- | --- | --- | --- |
+| Fresh API success | `true` | `api` | `fresh` |
+| Cached result | `null` | `cache` | `cached` |
+| Manual IDs | `null` | `manual` | `manual` |
+| Failed discovery and saved-ID fallback | `false` | `fallback` | `failed` |
+
+Cached results retain the original check time. A catalog invalidated during its request can return `stale`. Neither caching nor manual mode is a fresh reachability check. API model listing does not verify inference readiness.
+
+Profiles have `{ id, nickname?, thinking?: { protocol, levels? } }`. Nicknames are display-only. PATCH accepts `{ model, nickname?, thinking? }` for one profile. An empty/null nickname clears it. `thinking: null` removes that model declaration, allowing automatic or connection resolution. `{ "protocol": "none" }` explicitly disables overrides. `llama_cpp` supports on/off. Effort declarations require documented supported levels. No credential or model-ID rewrite is part of a profile update.
+
+## Dictation
+
+PUT `/api/preferences` accepts `dictation: null` to disable the service, or `dictation: { providerId, model }`. The pair is saved atomically and independently of the chat selection. The connection must exist.
+
+POST `/api/transcriptions` accepts `{ providerId, model, name, mime, data }`, with base64 audio data. The provider/model pair must still match the saved dictation selection. The server sends multipart `file` and `model` to the connection's fixed `/audio/transcriptions` path, using its server-owned key. Success returns `{ text }` without creating a conversation, attachment, message, or job.
+
+Supported containers are WAV, MP3, WebM, and MP4/M4A. MIME/signature and 10 MiB byte limits are enforced. The JSON request is limited to 15 MiB. At most two upstream calls run concurrently per app process. The upstream deadline is 60 seconds and response bound is 64 KiB. Browser recordings stop after 60 seconds. The server does not establish compressed-file duration.
+
+Only the main app page permits same-origin microphone access. Sandbox pages still deny it. Browser capture requires a secure context and explicit permission. File transcription works without capture. Cancellation disconnects the transport and prevents transcript insertion. It does not prove that provider processing or billing stopped. See [dictation use and privacy](INTERFACE.md#dictation).
 
 ## Generation example
 

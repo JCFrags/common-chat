@@ -11,13 +11,14 @@ Common Chat uses Node.js and browser JavaScript, with theme tokens adapted from 
 | Area | Implementation |
 | --- | --- |
 | Shared history | SQLite stores conversations, branches, messages, settings, and generation status. Devices access the same server. |
-| Model connections | The server calls configurable OpenAI-compatible chat completion endpoints. Keys stay server-side. |
+| Model connections | The server discovers API model IDs and calls configurable OpenAI-compatible endpoints. Optional nicknames affect display only. Keys stay server-side. |
 | Independent generation | A response continues after the browser disconnects. A new browser connection loads the saved state. |
 | Editing | Message edits create branches. Regeneration keeps earlier responses. Branch selection is shared across devices. |
 | Drafts | Unsent composer text, attachment references, edit state, and unresolved submissions persist in this browser's localStorage. They do not sync between devices. See [drafts](docs/DRAFTS.md). |
 | Workspace | Each conversation has logical files, immutable revisions, restore, and keyword search with source citations. PDF/DOCX extraction requires the isolated runner. See [workspaces](docs/WORKSPACE.md). |
 | Native tools | The web interface automatically makes available scoped file tools, Python/shell execution, and registry packages usable on compatible connections. Execution needs a separately configured runner. API clients still supply per-submission permissions. See [tools](docs/TOOLS.md) and [runner setup](docs/RUNNER.md). |
-| Compact interface | A compact desktop sidebar, one categorized Settings dialog, composer model/thinking controls, and concise revision-bound file rows. MCP and dictation have inactive entry points. See [interface controls](docs/INTERFACE.md). |
+| Compact interface | A compact desktop sidebar, categorized Settings, model-specific thinking controls, separate app/model API indicators, and concise revision-bound file rows. MCP remains inactive. See [interface controls](docs/INTERFACE.md). |
+| Dictation | Explicit recording or audio-file transcription adds editable, unsent text through a separately configured speech service. Recording requires HTTPS or localhost. See [dictation](docs/INTERFACE.md#dictation). |
 | Attachments | UTF-8 text and PNG, JPEG, WebP, or GIF images remain supported. Image requests require vision capability. Audio/video require inspection and the explicit `llama_cpp` input protocol. See [media](docs/MEDIA.md). |
 | Migration | The importer accepts llama.cpp legacy JSON, current JSONL, and ZIP archives of conversation exports. |
 | Authentication | One owner account can have separate sessions on multiple devices. API keys use authenticated encryption at rest. |
@@ -52,7 +53,7 @@ The chat server must be able to reach the model endpoint. The browser does not c
 2. Enter a connection name.
 3. Enter the base URL for the model server.
 4. Enter its API key when the endpoint requires one.
-5. Enter model names or leave the list empty for model discovery.
+5. Keep automatic model discovery, or choose manual IDs only when the endpoint has no model catalog.
 6. Enable only the capabilities that the endpoint and selected models support.
 7. Select "Save connection".
 8. Use the model button beside Send, or Settings, Connections, to select the connection and model.
@@ -71,7 +72,7 @@ Both named projects document OpenAI-compatible endpoints. The backend baseline u
 
 Capabilities are configured per connection. Separate connections can use the same endpoint with different model lists and capabilities. Unsupported settings cause explicit errors rather than silent omission. The settings dialog hides unsupported controls. For a compatible llama.cpp server, enable "Live llama.cpp statistics (llama.cpp only)" to request interim timing and prompt-progress records. This option defaults to off. Do not enable it for other providers.
 
-Audio input, video input, and model tools each need their own explicit capability. Vision and statistics settings do not enable them. Audio/video protocol selections default to `none`; choose `llama_cpp` only when the endpoint and selected model support that input. Native video supplies visual frames, not its soundtrack. The web interface checks tool availability automatically on each new submission. No per-chat enable step is needed. Thinking controls require their own configured protocol and supported levels. See [media](docs/MEDIA.md), [tool policy](docs/TOOLS.md), and [interface capabilities](docs/INTERFACE.md).
+Audio input, video input, and model tools each need their own explicit capability. Vision and statistics settings do not enable them. Audio/video protocol selections default to `none`; choose `llama_cpp` only when the endpoint and selected model support that input. Native video supplies visual frames, not its soundtrack. The web interface checks tool availability automatically on each new submission. No per-chat enable step is needed. Thinking controls require documented per-model or connection declarations, or recognized API metadata that exposes supported levels. Generic model catalogs do not expose thinking levels. See [media](docs/MEDIA.md), [tool policy](docs/TOOLS.md), and [interface capabilities](docs/INTERFACE.md).
 
 ## Drafts, files, and optional execution
 

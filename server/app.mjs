@@ -6,7 +6,8 @@ import { Store } from './store.mjs';
 import { Auth } from './auth.mjs';
 import { Generations } from './generation.mjs';
 import { HttpError, fail, id, now, body, text, object, settings, providerConfig, attachmentData } from './validation.mjs';
-import { listModels } from './provider.mjs';
+import { getModelCatalog, getThinkingCapabilities, updateModelProfile, invalidateModelCatalog } from './model-catalog.mjs';
+import { Transcriptions } from './transcription.mjs';
 import { importConversations, exportConversations } from './transfer.mjs';
 import { sandboxPolicy, sandboxDocument } from './sandbox.mjs';
 import { Workspace } from './workspace.mjs';
@@ -31,6 +32,11 @@ const assets = new Map([
   ['/tool-presentation.js', ['tool-presentation.js', 'text/javascript; charset=utf-8']],
   ['/tool-presentation.css', ['tool-presentation.css', 'text/css; charset=utf-8']],
   ['/thinking.js', ['thinking.js', 'text/javascript; charset=utf-8']],
+  ['/connection-status.js', ['connection-status.js', 'text/javascript; charset=utf-8']],
+  ['/model-controls.js', ['model-controls.js', 'text/javascript; charset=utf-8']],
+  ['/dictation-settings.js', ['dictation-settings.js', 'text/javascript; charset=utf-8']],
+  ['/dictation.js', ['dictation.js', 'text/javascript; charset=utf-8']],
+  ['/dictation.css', ['dictation.css', 'text/css; charset=utf-8']],
   ['/ui-shell.js', ['ui-shell.js', 'text/javascript; charset=utf-8']],
   ['/drafts.js', ['drafts.js', 'text/javascript; charset=utf-8']],
   ['/diagram-source.js', ['diagram-source.js', 'text/javascript; charset=utf-8']],
@@ -71,7 +77,9 @@ export async function createApp(options = {}) {
   const executions = new Executions(store, workspace, runner, emit, options.executionOptions);
   const tools = new Tools(workspace, executions);
   const media = new Media({ mediaProbe: runner?.mediaProbe.bind(runner), readAttachment: a => store.readAttachment(a) });
-  const generations = new Generations(store, emit, { ...options.generationOptions, tools, media });
+  const generations = new Generations(store, emit, { ...options.generationOptions, tools, media,
+    resolveThinking: async (provider, model) => { await getModelCatalog(provider); return getThinkingCapabilities(provider, model); } });
+  const transcriptions = new Transcriptions(options.transcriptionOptions);
   function originFor(req) {
     return publicUrl?.origin ?? `http://${req.headers.host}`;
   }
@@ -111,6 +119,7 @@ export async function createApp(options = {}) {
       }
       if (method === 'GET' && assets.has(path)) {
         const [file, type] = assets.get(path);
+        if (path === '/') res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
         res.setHeader('Content-Type', type); res.end(readFileSync(join(publicDir, file))); return;
       }
       if (!path.startsWith('/api/')) fail(404, 'Not found.');
@@ -139,9 +148,33 @@ export async function createApp(options = {}) {
         if (value.theme !== undefined) { if (!['light','dark','system'].includes(value.theme)) fail(400, 'Invalid theme.'); prefs.theme = value.theme; }
         if (value.providerId !== undefined) prefs.providerId = text(value.providerId, 'providerId', 100, true);
         if (value.model !== undefined) prefs.model = text(value.model, 'model', 300, true);
+        if (value.dictation !== undefined) {
+          if (value.dictation === null) prefs.dictation = null;
+          else {
+            const selection = object(value.dictation, 'dictation selection');
+            const providerId = text(selection.providerId, 'dictation providerId', 100), model = text(selection.model, 'dictation model', 300);
+            store.provider(providerId);
+            prefs.dictation = { providerId, model };
+          }
+        }
         const current = JSON.parse(store.get('SELECT settings FROM account WHERE id=1').settings);
         store.run('UPDATE account SET settings=? WHERE id=1', JSON.stringify({ ...current, ...prefs }));
         emit({ type: 'preferences' }); send(res, { ...current, ...prefs }); return;
+      }
+      if (path === '/api/transcriptions' && method === 'POST') {
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        const disconnected = () => { if (!res.writableEnded) abort(); };
+        req.on('aborted', abort); res.on('close', disconnected);
+        try {
+          const input = await body(req, 15 * 1024 * 1024);
+          const selection = JSON.parse(store.get('SELECT settings FROM account WHERE id=1').settings).dictation;
+          if (!selection || input.providerId !== selection.providerId || input.model !== selection.model) fail(409, 'The dictation service changed. Review Dictation settings before transcription.');
+          const provider = store.provider(selection.providerId);
+          const result = await transcriptions.transcribe(provider, input, { signal: controller.signal });
+          if (!controller.signal.aborted) send(res, result);
+        } finally { req.off('aborted', abort); res.off('close', disconnected); }
+        return;
       }
       if (path === '/api/events' && method === 'GET') {
         if (subscribers.size >= 50) fail(429, 'Too many live browser connections.');
@@ -166,19 +199,25 @@ export async function createApp(options = {}) {
         let key = existing?.api_key ?? null;
         if (input.clearKey === true) key = null;
         if (input.apiKey) key = store.encrypt(text(input.apiKey, 'apiKey', 8000));
-        store.run(`INSERT INTO providers(id,name,base_url,api_key,models,capabilities,created_at) VALUES(?,?,?,?,?,?,?)
-          ON CONFLICT(id) DO UPDATE SET name=excluded.name,base_url=excluded.base_url,api_key=excluded.api_key,models=excluded.models,capabilities=excluded.capabilities`,
-          pid, config.name, config.baseUrl, key, JSON.stringify(config.models), JSON.stringify(config.capabilities), now());
+        const modelConfig = config.modelConfig === undefined ? existing?.model_config ?? '{}' : JSON.stringify(config.modelConfig);
+        store.run(`INSERT INTO providers(id,name,base_url,api_key,models,capabilities,model_config,created_at) VALUES(?,?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET name=excluded.name,base_url=excluded.base_url,api_key=excluded.api_key,models=excluded.models,capabilities=excluded.capabilities,model_config=excluded.model_config`,
+          pid, config.name, config.baseUrl, key, JSON.stringify(config.models), JSON.stringify(config.capabilities), modelConfig, now());
+        invalidateModelCatalog(pid);
         emit({ type: 'providers' }); send(res, store.providers().find(p => p.id === pid), existing ? 200 : 201); return;
       }
       if (providerMatch && providerMatch[2] === 'models' && method === 'GET') {
-        send(res, { models: await listModels(store.provider(providerMatch[1])) }); return;
+        send(res, await getModelCatalog(store.provider(providerMatch[1]), { refresh: url.searchParams.get('refresh') === '1' })); return;
+      }
+      if (providerMatch && providerMatch[2] === 'models' && method === 'PATCH') {
+        const provider = updateModelProfile(store, providerMatch[1], await body(req, 16384));
+        emit({ type: 'providers' }); send(res, provider); return;
       }
       if (providerMatch && !providerMatch[2] && method === 'DELETE') {
         store.provider(providerMatch[1]);
         const used = store.get("SELECT j.id FROM jobs j JOIN messages m ON m.id=j.message_id WHERE j.status='running' AND m.provider_id=?", providerMatch[1]);
         if (used) fail(409, 'Stop active generations before deleting this connection.');
-        store.run('DELETE FROM providers WHERE id=?', providerMatch[1]); emit({ type: 'providers' }); send(res, { deleted: true }); return;
+        store.run('DELETE FROM providers WHERE id=?', providerMatch[1]); invalidateModelCatalog(providerMatch[1]); emit({ type: 'providers' }); send(res, { deleted: true }); return;
       }
       if (path === '/api/conversations' && method === 'GET') {
         const q = url.searchParams.get('q') ?? ''; text(q, 'search', 500, true);
@@ -293,7 +332,7 @@ export async function createApp(options = {}) {
   server.requestTimeout = 30000; server.headersTimeout = 15000; server.maxHeadersCount = 50;
   let stopped = false;
   return {
-    server, store, auth, generations, workspace, executions, bootstrapPassword,
+    server, store, auth, generations, workspace, executions, transcriptions, bootstrapPassword,
     async listen(port = 3000, host = '127.0.0.1') {
       if (trustedLocal && !['127.0.0.1', 'localhost', '::1'].includes(host)) throw new Error('Trusted-local access must listen on loopback only.');
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
@@ -302,6 +341,7 @@ export async function createApp(options = {}) {
     },
     async close() {
       if (stopped) return; stopped = true;
+      await transcriptions.stop();
       await generations.stop();
       await executions.stop();
       for (const subscriber of subscribers) subscriber.res.end(); subscribers.clear();
