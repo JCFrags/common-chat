@@ -1,0 +1,9 @@
+.dictation-panel { display: grid; gap: 8px; margin: 8px 0; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); color: var(--foreground); }
+.dictation-panel h3, .dictation-panel p { margin: 0; }
+.dictation-panel p { overflow-wrap: anywhere; }
+.dictation-panel audio { width: 100%; max-width: 100%; }
+.dictation-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.dictation-panel button { min-height: 36px; padding: 6px 9px; font-size: 12px; }
+.dictation-file { display: grid; gap: 4px; min-width: 0; max-width: 100%; font-size: 12px; }
+.dictation-file input { padding: 4px; width: 100%; max-width: 320px; font-size: 12px; }
+@media (pointer: coarse) { .dictation-panel button { min-height: 40px; } }
