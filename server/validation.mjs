@@ -46,6 +46,45 @@ export function settings(value = {}) {
   }
   return result;
 }
+export const thinkingEffortLevels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+export function thinkingDeclaration(value) {
+  const declaration = object(value, 'thinking');
+  const protocol = declaration.protocol;
+  if (!['none', 'llama_cpp', 'reasoning_effort', 'openrouter_reasoning'].includes(protocol)) fail(400, 'Invalid thinking protocol.');
+  const allowed = protocol === 'llama_cpp' ? ['on', 'off'] : protocol === 'none' ? [] : thinkingEffortLevels;
+  const levels = declaration.levels;
+  if (levels !== undefined || ['reasoning_effort', 'openrouter_reasoning'].includes(protocol)) {
+    if (!Array.isArray(levels) || levels.length > allowed.length || (protocol !== 'none' && !levels.length) || levels.some(level => !allowed.includes(level))) {
+      fail(400, 'Configure only the thinking levels supported by this protocol and model.');
+    }
+    return { protocol, levels: [...new Set(levels)] };
+  }
+  return { protocol };
+}
+export function modelConfig(value) {
+  const config = object(value, 'modelConfig'), result = {};
+  if (config.discovery !== undefined) {
+    if (!['auto', 'manual'].includes(config.discovery)) fail(400, 'Invalid model discovery mode.');
+    result.discovery = config.discovery;
+  }
+  result.metadata = config.metadata ?? 'generic';
+  if (!['generic', 'openrouter'].includes(result.metadata)) fail(400, 'Invalid model metadata adapter.');
+  const profiles = config.profiles ?? [], seen = new Set();
+  if (!Array.isArray(profiles) || profiles.length > 2000) fail(400, 'Use at most 2000 model profiles.');
+  result.profiles = profiles.map(value => {
+    const profile = object(value, 'model profile'), model = text(profile.id, 'model profile ID', 300);
+    if (seen.has(model)) fail(400, 'Model profile IDs must be unique.');
+    seen.add(model);
+    const result = { id: model };
+    if (profile.nickname !== undefined && profile.nickname !== null) {
+      const nickname = text(profile.nickname, 'model nickname', 100, true).replace(/[\x00-\x1f\x7f]/g, '').trim();
+      if (nickname) result.nickname = nickname;
+    }
+    if (profile.thinking !== undefined && profile.thinking !== null) result.thinking = thinkingDeclaration(profile.thinking);
+    return result;
+  });
+  return result;
+}
 export function providerConfig(value) {
   object(value);
   const name = text(value.name, 'name', 100).trim();
@@ -68,15 +107,16 @@ export function providerConfig(value) {
     if (!['none', 'llama_cpp'].includes(capabilities[key])) fail(400, `Invalid capability: ${key}.`);
   }
   capabilities.thinking = c.thinking ?? 'none';
-  if (!['none', 'llama_cpp', 'reasoning_effort'].includes(capabilities.thinking)) fail(400, 'Invalid thinking protocol.');
-  if (capabilities.thinking === 'reasoning_effort') {
+  if (!['none', 'llama_cpp', 'reasoning_effort', 'openrouter_reasoning'].includes(capabilities.thinking)) fail(400, 'Invalid thinking protocol.');
+  if (['reasoning_effort', 'openrouter_reasoning'].includes(capabilities.thinking)) {
     const levels = c.thinkingLevels;
-    if (!Array.isArray(levels) || !levels.length || levels.length > 7 || levels.some(level => !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(level))) fail(400, 'Configure the thinking levels supported by this connection and its models.');
+    if (!Array.isArray(levels) || !levels.length || levels.length > 7 || levels.some(level => !thinkingEffortLevels.includes(level))) fail(400, 'Configure the thinking levels supported by this connection and its models.');
     capabilities.thinkingLevels = [...new Set(levels)];
   }
   capabilities.tokenParameter = c.tokenParameter ?? 'max_tokens';
   if (!['max_tokens', 'max_completion_tokens'].includes(capabilities.tokenParameter)) fail(400, 'Invalid token parameter.');
-  return { name, baseUrl: u.href.replace(/\/+$/, ''), models: [...new Set(models)], capabilities };
+  return { name, baseUrl: u.href.replace(/\/+$/, ''), models: [...new Set(models)], capabilities,
+    ...(value.modelConfig === undefined ? {} : { modelConfig: modelConfig(value.modelConfig) }) };
 }
 export async function body(req, limit = 34 * 1024 * 1024) {
   const chunks = []; let size = 0;

@@ -1,4 +1,5 @@
 import { fail, HttpError } from './validation.mjs';
+import { getModelCatalog, getThinkingCapabilities } from './model-catalog.mjs';
 
 /** Parse SSE records across arbitrary byte boundaries, including UTF-8 and CRLF. */
 export async function* sseRecords(stream) {
@@ -34,14 +35,16 @@ export async function* sseRecords(stream) {
   const result = take(''); if (result !== null) yield result;
 }
 
-/** Send thinking fields only for an explicitly configured protocol and level. */
-export function thinkingPayload(provider, settings) {
+/** Provider default sends no override. Preflight and payload use the same model resolver. */
+export function thinkingPayload(provider, settings, model) {
   if (settings.thinking === undefined) return {};
-  const capabilities = provider.capabilities ?? {};
-  if (capabilities.thinking === 'llama_cpp' && ['on', 'off'].includes(settings.thinking)) {
-    return { chat_template_kwargs: { enable_thinking: settings.thinking === 'on' } };
+  const thinking = getThinkingCapabilities(provider, model);
+  if (thinking.protocol === 'unknown') fail(400, 'Thinking support is unknown or stale for this model. Refresh models, configure its protocol, or use the provider default.');
+  if (thinking.levels.includes(settings.thinking)) {
+    if (thinking.protocol === 'llama_cpp') return { chat_template_kwargs: { enable_thinking: settings.thinking === 'on' } };
+    if (thinking.protocol === 'reasoning_effort') return { reasoning_effort: settings.thinking };
+    if (thinking.protocol === 'openrouter_reasoning') return { reasoning: { effort: settings.thinking } };
   }
-  if (capabilities.thinking === 'reasoning_effort' && capabilities.thinkingLevels?.includes(settings.thinking)) return { reasoning_effort: settings.thinking };
   fail(400, 'The selected connection and model do not enable this thinking level. Use the provider default or configure its supported protocol.');
 }
 
@@ -60,14 +63,8 @@ export async function responseError(response, provider) {
     429: 'The model server is rate-limited or busy.', 503: 'The model server is unavailable or busy.' };
   throw new HttpError(502, `${provider.name}: HTTP ${response.status}. ${reasons[response.status] ?? 'The model server rejected the request. Check its logs.'}`);
 }
-export async function listModels(provider) {
-  if (provider.models.length) return provider.models;
-  const response = await fetch(`${provider.base_url}/models`, { headers: headers(provider), redirect: 'error', signal: AbortSignal.timeout(15000) });
-  if (!response.ok) await responseError(response, provider);
-  const bytes = await limitedText(response, 2 * 1024 * 1024);
-  const json = JSON.parse(bytes);
-  if (!Array.isArray(json.data)) fail(502, 'The models endpoint did not return an OpenAI-compatible model list. Enter model names in the connection settings.');
-  return [...new Set(json.data.map(m => m.id).filter(m => typeof m === 'string' && m.length <= 300))].slice(0, 2000);
+export async function listModels(provider, options) {
+  return (await getModelCatalog(provider, options)).models;
 }
 export async function limitedText(response, max) {
   let size = 0; const chunks = [];

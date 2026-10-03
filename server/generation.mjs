@@ -1,13 +1,14 @@
 import { id, now, fail, hash, object, text, settings as validateSettings } from './validation.mjs';
 import { sseRecords, headers, errorText, responseError, limitedText, deltaText, usageStats, timingStats, promptProgressStats, thinkingPayload } from './provider.mjs';
 import { toolPermissions, toolTranscript, ToolCallAccumulator, TOOL_LIMITS } from './tools.mjs';
+import { modelDiscoveryMode, getThinkingCapabilities } from './model-catalog.mjs';
 
 export class Generations {
   constructor(store, emit, options = {}) {
     this.store = store; this.emit = emit; this.active = new Map(); this.closing = false;
     this.timeoutMs = options.timeoutMs ?? 15 * 60000;
     this.maxCharacters = options.maxCharacters ?? 2 * 1024 * 1024;
-    this.tools = options.tools; this.media = options.media;
+    this.tools = options.tools; this.media = options.media; this.resolveThinking = options.resolveThinking;
     this.shutdown = new AbortController(); this.preparing = new Set();
     // Store already interrupts orphan jobs. Finish their display state without replaying calls.
     this.store.transaction(() => {
@@ -22,8 +23,8 @@ export class Generations {
       }
     });
   }
-  validateCapabilities(p, settings, rows, attachments) {
-    thinkingPayload(p, settings);
+  validateCapabilities(p, settings, rows, attachments, model, deferThinking = false) {
+    if (!deferThinking) thinkingPayload(p, settings, model);
     for (const key of ['temperature', 'topP', 'maxTokens']) {
       if (settings[key] !== undefined && !p.capabilities[key]) fail(400, `The selected connection does not enable ${key}. Remove that setting or edit its capabilities.`);
     }
@@ -97,7 +98,7 @@ export class Generations {
     if (this.active.size >= 8) fail(429, 'Eight generations are already active. Wait for one to finish.');
     const p = this.store.provider(text(input.providerId, 'providerId', 100));
     const model = text(input.model, 'model', 300);
-    if (p.models.length && !p.models.includes(model)) fail(400, 'This model is not in the configured model list.');
+    if (modelDiscoveryMode(p) === 'manual' && p.models.length && !p.models.includes(model)) fail(400, 'This model is not in the configured model list.');
     const settings = validateSettings(input.settings ?? JSON.parse(conversation.settings));
     const parentId = input.parentId ?? null;
     if (parentId !== null) text(parentId, 'parentId', 100);
@@ -122,7 +123,8 @@ export class Generations {
     const previousFiles = path.flatMap(m => this.store.all('SELECT * FROM attachments WHERE message_id=?', m.id));
     if ([...previousFiles, ...uploaded].reduce((sum, a) => sum + a.size, 0) > 30 * 1024 * 1024) fail(400, 'This branch exceeds the 30 MiB attachment context limit.');
     const attachments = [...previousFiles, ...uploaded];
-    this.validateCapabilities(p, settings, path, attachments);
+    const needsThinkingResolution = () => settings.thinking !== undefined && typeof this.resolveThinking === 'function' && getThinkingCapabilities(p, model).protocol === 'unknown';
+    this.validateCapabilities(p, settings, path, attachments, model, needsThinkingResolution());
     const wantsTools = Object.values(permissions).some(Boolean);
     if (wantsTools && p.capabilities.tools !== true) fail(400, 'The selected connection does not enable tools.');
     if (wantsTools && !this.tools) fail(503, 'Model tools are not configured.');
@@ -141,7 +143,8 @@ export class Generations {
     if (this.active.size >= 8) fail(429, 'Eight generations are already active. Wait for one to finish.');
     const latestProvider = this.store.provider(p.id);
     if (latestProvider.base_url !== p.base_url || latestProvider.api_key !== p.api_key || latestProvider.name !== p.name ||
-      JSON.stringify(latestProvider.capabilities) !== JSON.stringify(p.capabilities) || JSON.stringify(latestProvider.models) !== JSON.stringify(p.models)) fail(409, 'The connection changed during validation. Review its settings and try again.');
+      JSON.stringify(latestProvider.capabilities) !== JSON.stringify(p.capabilities) || JSON.stringify(latestProvider.models) !== JSON.stringify(p.models) ||
+      JSON.stringify(latestProvider.modelConfig) !== JSON.stringify(p.modelConfig)) fail(409, 'The connection changed during validation. Review its settings and try again.');
     for (const attachment of attachments) {
       if (!this.store.get('SELECT id FROM attachments WHERE id=? AND conversation_id=?', attachment.id, cid)) fail(409, 'An attachment changed during validation. Review the conversation and try again.');
     }
@@ -153,7 +156,7 @@ export class Generations {
       if (messages[0]?.role === 'system' && typeof messages[0].content === 'string') messages[0].content += `\n\n${guide}`;
       else messages.unshift({ role: 'system', content: guide });
     }
-    const payload = { model, messages, stream: p.capabilities.streaming, ...thinkingPayload(p, settings) };
+    const payload = { model, messages, stream: p.capabilities.streaming, ...thinkingPayload(p, settings, model) };
     if (definitions.length) payload.tools = definitions;
     if (payload.stream) {
       payload.stream_options = { include_usage: true };
@@ -191,10 +194,13 @@ export class Generations {
     return response;
     };
     // Keep the no-hook path synchronous for embedded callers. App routes must always await submit.
-    if (!wantsTools && !this.media?.validateBranch) return commit([]);
+    if (!wantsTools && !this.media?.validateBranch && !needsThinkingResolution()) return commit([]);
     const prepare = async () => {
       if (this.media?.validateBranch) await this.media.validateBranch(p, attachments, { signal: validationSignal });
       const definitions = wantsTools ? await this.tools.prepare(permissions, { signal: validationSignal }) : [];
+      validationSignal.throwIfAborted();
+      // The hook refreshes server-owned metadata. Its return value cannot bypass payload validation.
+      if (needsThinkingResolution()) await this.resolveThinking(p, model, { signal: validationSignal });
       validationSignal.throwIfAborted();
       return commit(definitions);
     };

@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync, chmodSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
-import { id, now, fail, hash } from './validation.mjs';
+import { id, now, fail, hash, modelConfig as validateModelConfig } from './validation.mjs';
 
 const parse = (s, fallback = {}) => s ? JSON.parse(s) : fallback;
 export class Store {
@@ -35,7 +35,7 @@ export class Store {
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS account (id INTEGER PRIMARY KEY CHECK(id=1), password TEXT NOT NULL, settings TEXT NOT NULL DEFAULT '{}');
         CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, expires INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT, models TEXT NOT NULL, capabilities TEXT NOT NULL, created_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS providers (id TEXT PRIMARY KEY, name TEXT NOT NULL, base_url TEXT NOT NULL, api_key TEXT, models TEXT NOT NULL, capabilities TEXT NOT NULL, model_config TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, title TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, active_leaf TEXT, version INTEGER NOT NULL DEFAULT 1, settings TEXT NOT NULL DEFAULT '{}', source TEXT NOT NULL DEFAULT '{}');
         CREATE TABLE IF NOT EXISTS messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, parent_id TEXT, role TEXT NOT NULL, content TEXT NOT NULL DEFAULT '', reasoning TEXT NOT NULL DEFAULT '', status TEXT NOT NULL, provider_id TEXT, provider_name TEXT, model TEXT, settings TEXT NOT NULL DEFAULT '{}', metadata TEXT NOT NULL DEFAULT '{}', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS messages_conversation ON messages(conversation_id, created_at);
@@ -46,6 +46,9 @@ export class Store {
         CREATE TABLE IF NOT EXISTS requests (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE, fingerprint TEXT NOT NULL, response TEXT NOT NULL);
         PRAGMA user_version=1;
       `);
+      if (!this.all('PRAGMA table_info(providers)').some(column => column.name === 'model_config')) {
+        this.db.exec("ALTER TABLE providers ADD COLUMN model_config TEXT NOT NULL DEFAULT '{}'");
+      }
       this.transaction(() => {
         const affected = this.all("SELECT DISTINCT conversation_id FROM jobs WHERE status='running'");
         this.run("UPDATE messages SET status='interrupted', updated_at=? WHERE status='streaming'", now());
@@ -139,12 +142,12 @@ export class Store {
   }
   providers() {
     return this.all('SELECT * FROM providers ORDER BY created_at').map(p => ({ id: p.id, name: p.name, baseUrl: p.base_url,
-      models: parse(p.models, []), capabilities: parse(p.capabilities), hasKey: !!p.api_key }));
+      models: parse(p.models, []), capabilities: parse(p.capabilities), modelConfig: validateModelConfig(parse(p.model_config)), hasKey: !!p.api_key }));
   }
   provider(pid) {
     const p = this.get('SELECT * FROM providers WHERE id=?', pid);
     if (!p) fail(404, 'Connection not found.');
-    return { ...p, apiKey: this.decrypt(p.api_key), models: parse(p.models, []), capabilities: parse(p.capabilities) };
+    return { ...p, apiKey: this.decrypt(p.api_key), models: parse(p.models, []), capabilities: parse(p.capabilities), modelConfig: validateModelConfig(parse(p.model_config)) };
   }
   addAttachment(cid, file, messageId = null) {
     const aid = id();
