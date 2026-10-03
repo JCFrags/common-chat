@@ -8,6 +8,7 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/style.css">
   <link rel="stylesheet" href="/workspace.css">
+  <link rel="stylesheet" href="/tool-presentation.css">
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -19,119 +20,180 @@
       <form id="login-form">
         <label for="password">Server password</label>
         <input id="password" type="password" autocomplete="current-password" required autofocus>
-        <button class="primary" id="login-button" type="submit">Sign in</button>
+        <button class="ghost icon login-submit" id="login-button" type="submit" aria-label="Sign in" title="Sign in" data-icon="send"></button>
         <p id="login-error" class="error" role="alert"></p>
       </form>
       <p class="muted login-footer">Use the same server address on each device.<br>For the initial password, check the server terminal.</p>
     </div>
   </section>
   <div id="app" hidden>
-    <button id="sidebar-backdrop" aria-label="Close sidebar"></button>
+    <button id="sidebar-backdrop" aria-label="Close sidebar" title="Close sidebar"></button>
     <aside id="sidebar">
       <div class="brand row"><div class="brand-mark" data-icon="chat"></div><span class="brand-name">Common Chat</span><span class="badge" id="release-badge">preview</span></div>
-      <button id="new-chat"><span data-icon="plus"></span>New chat</button>
-      <div class="search"><span data-icon="search"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations"></div>
+      <div class="sidebar-quick">
+        <button class="ghost icon" id="new-chat" aria-label="New chat" title="New chat (Ctrl+Shift+O)" data-icon="plus"></button>
+        <button class="ghost icon" id="generation-button" aria-label="Generation settings" title="Generation settings" data-icon="sliders"></button>
+        <div id="workspace-slot"></div>
+      </div>
+      <div class="search"><span data-icon="search"></span><input id="search" placeholder="Search conversations" aria-label="Search conversations" title="Search conversations (Ctrl+K)"></div>
       <div class="sidebar-caption">Conversations</div>
       <nav id="conversation-list" aria-label="Conversations"></nav>
       <div class="sidebar-footer">
-        <button id="connections-button"><span data-icon="plug"></span>Connections</button>
-        <button id="import-button"><span data-icon="upload"></span>Import conversations</button>
-        <button id="preferences-button"><span data-icon="settings"></span>Settings and data</button>
-        <div class="server-status"><span class="status-dot"></span><span id="sync-status">Connecting</span></div>
+        <button class="ghost icon" id="preferences-button" aria-label="Settings" title="Settings" aria-haspopup="dialog" aria-controls="preferences-dialog" data-icon="settings"></button>
+        <div class="server-status" title="Connecting to server"><span class="status-dot" aria-hidden="true"></span><span id="sync-status" class="sr-only" role="status">Connecting</span></div>
       </div>
     </aside>
     <main id="main">
       <header id="topbar">
-        <button class="ghost icon mobile-only" id="sidebar-toggle" aria-label="Open sidebar" data-icon="menu"></button>
-        <div id="model-controls">
-          <select id="provider-select" aria-label="Model connection"><option value="">Add a connection</option></select>
-          <input id="model-input" list="model-options" placeholder="Select or enter a model" aria-label="Model name" autocomplete="off">
-          <datalist id="model-options"></datalist>
-        </div>
-        <div class="toolbar">
-          <button class="ghost icon desktop-only" id="refresh-models" aria-label="Refresh model list" title="Refresh model list" data-icon="refresh"></button>
-          <button class="ghost icon" id="generation-button" aria-label="Generation settings" title="Generation settings" data-icon="sliders"></button>
-          <button class="ghost icon" id="conversation-button" aria-label="Conversation actions" title="Conversation actions" data-icon="more"></button>
-        </div>
+        <button class="ghost icon mobile-only" id="sidebar-toggle" aria-label="Open sidebar" title="Open sidebar" data-icon="menu"></button>
+        <div class="toolbar"></div>
       </header>
       <section id="thread" aria-label="Messages"></section>
       <div id="composer-area">
         <div class="composer-inner">
-          <div id="draft-banner" hidden><span id="draft-label"></span><button class="ghost" id="cancel-edit">Cancel edit</button></div>
+          <div id="draft-banner" hidden><span id="draft-label" role="status"></span></div>
           <form id="composer">
             <div id="attachment-list"></div>
-            <textarea id="prompt" rows="2" placeholder="Message your model..." aria-label="Message"></textarea>
+            <textarea id="prompt" rows="2" placeholder="Message your model..." aria-label="Message" title="Enter to send. Shift+Enter for a new line."></textarea>
             <div class="composer-controls">
-              <div class="row"><button type="button" class="ghost icon" id="attach-button" aria-label="Attach files" title="Attach images or UTF-8 text" data-icon="attach"></button><span class="composer-hint">Enter to send. Shift+Enter for a new line.</span></div>
-              <button type="button" id="stop" hidden><span data-icon="stop"></span>Stop</button>
-              <button type="submit" class="primary" id="send">Send<span data-icon="send"></span></button>
+              <div class="row composer-start">
+                <div class="composer-menu-wrap">
+                  <button type="button" class="ghost icon" id="attach-button" aria-label="Upload and tools" title="Upload and tools" aria-haspopup="menu" aria-controls="composer-menu" aria-expanded="false" data-icon="attach"></button>
+                  <div id="composer-menu" class="shell-menu" role="menu" aria-label="Upload and tools" hidden>
+                    <div id="upload-menu-panel">
+                      <button type="button" id="upload-button" role="menuitem" tabindex="-1"><span data-icon="upload"></span>Upload</button>
+                      <button type="button" id="tools-menu-button" role="menuitem" tabindex="-1" aria-haspopup="menu" aria-controls="tools-submenu" aria-expanded="false"><span data-icon="tools"></span>Tools<span data-icon="next"></span></button>
+                    </div>
+                    <div id="tools-submenu" role="menu" aria-label="Tools" hidden>
+                      <button type="button" id="tools-menu-back" role="menuitem" tabindex="-1"><span data-icon="previous"></span>Back</button>
+                      <button type="button" id="menu-workspace" role="menuitem" tabindex="-1"><span data-icon="files"></span>Files/code</button>
+                      <button type="button" id="menu-tool-settings" role="menuitem" tabindex="-1"><span data-icon="settings"></span>Tool availability/settings</button>
+                    </div>
+                  </div>
+                </div>
+                <button type="button" class="ghost icon" id="dictation-button" aria-label="Dictation settings, not implemented" title="Dictation settings (not implemented)" data-icon="microphone"></button>
+                <button type="button" class="ghost icon" id="cancel-edit" aria-label="Discard draft" title="Discard draft" data-icon="close" hidden></button>
+              </div>
+              <div class="row composer-end">
+                <button type="button" class="ghost icon" id="model-button" aria-label="Select model" title="Select model" aria-haspopup="dialog" aria-controls="model-controls" aria-expanded="false" data-icon="model"></button>
+                <button type="button" class="ghost icon" id="thinking-button" aria-label="Thinking settings" title="Thinking settings" data-icon="thinking" hidden></button>
+                <button type="button" class="ghost icon" id="stop" aria-label="Stop response" title="Stop response" data-icon="stop" hidden></button>
+                <button type="submit" class="ghost icon" id="send" aria-label="Send" title="Send" data-icon="send"></button>
+              </div>
             </div>
           </form>
-          <div class="composer-footer">History is stored on this server. Review model output before use.</div>
+          <div id="model-controls" class="model-picker shell-popover" role="dialog" aria-labelledby="model-picker-title" hidden>
+            <div class="row spread"><h3 id="model-picker-title">Model</h3><button type="button" class="ghost icon" id="close-model-picker" aria-label="Close model picker" title="Close model picker" data-icon="close"></button></div>
+            <label class="field" for="model-input">Model name</label>
+            <input id="model-input" list="model-options" placeholder="Select or enter a model" aria-label="Model name" autocomplete="off">
+            <datalist id="model-options"></datalist>
+            <div class="row model-picker-actions"><button type="button" class="ghost icon" id="connections-button" aria-label="Connection settings" title="Connection settings" data-icon="plug"></button><button type="button" class="ghost icon" id="model-info-button" aria-label="Model and connection help" title="Model and connection help" data-icon="info"></button></div>
+          </div>
+          <div class="composer-footer" role="status" hidden></div>
         </div>
       </div>
     </main>
   </div>
   <input id="file-input" type="file" multiple hidden accept="image/png,image/jpeg,image/webp,image/gif,text/*,.py,.js,.ts,.json,.md,.rs,.go,.c,.cpp,.h,.yaml,.yml,.toml,.log,.csv,.sh,.html,.xml,.css">
   <input id="import-input" type="file" hidden accept=".json,.jsonl,.zip">
-  <dialog id="connections-dialog">
-    <div class="dialog-header"><div><h2>Model connections</h2><p class="small">The chat server sends requests to these endpoints.</p></div><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div>
-    <form id="connection-form" class="stack">
-      <label class="field">Connection<select id="edit-provider"><option value="">New connection</option></select></label>
-      <div class="form-grid"><label class="field">Name<input id="connection-name" required placeholder="Local model server" maxlength="100"></label><label class="field">Base URL<input id="connection-url" type="url" required placeholder="http://localhost:8080/v1"></label></div>
-      <label class="field">API key<input id="connection-key" type="password" autocomplete="new-password" placeholder="Optional. Leave blank to keep the saved key."><small>Saved keys are encrypted on the server and are never returned to the browser.</small></label>
-      <label class="check"><input id="connection-clear-key" type="checkbox">Remove the saved API key</label>
-      <label class="field">Model names<textarea id="connection-models" rows="2" placeholder="One model per line. Leave empty to use the /models endpoint."></textarea></label>
-      <fieldset><legend>Enabled capabilities</legend><div class="checks">
-        <label class="check"><input id="cap-streaming" type="checkbox" checked>Streaming</label>
-        <label class="check"><input id="cap-llamaCppTimings" type="checkbox">Live llama.cpp statistics (llama.cpp only)</label>
-        <label class="check"><input id="cap-vision" type="checkbox">Image input</label>
-        <label class="check"><input id="cap-tools" type="checkbox">Function tools (per-chat permission required)</label>
-        <label class="check"><input id="cap-systemPrompt" type="checkbox" checked>System prompts</label>
-        <label class="check"><input id="cap-temperature" type="checkbox" checked>Temperature</label>
-        <label class="check"><input id="cap-topP" type="checkbox" checked>Top-p</label>
-        <label class="check"><input id="cap-maxTokens" type="checkbox" checked>Output token limit</label>
-      </div></fieldset>
-      <label class="field">Token limit parameter<select id="token-parameter"><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select><small>Enable only capabilities supported by the endpoint and selected models. Use separate connections for different capability sets.</small></label>
-      <p class="error" id="connection-error" role="alert"></p>
-      <div class="dialog-footer"><button type="button" class="ghost danger" id="delete-provider" hidden>Delete connection</button><button type="submit" class="primary" id="save-provider">Save connection</button></div>
-    </form>
-  </dialog>
-  <dialog id="generation-dialog">
-    <div class="dialog-header"><div><h2>Generation settings</h2><p class="small">Settings apply to this conversation. Blank fields use provider defaults.</p></div><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div>
-    <form id="generation-form" class="stack">
-      <label class="field" id="field-systemPrompt">System prompt<textarea id="system-prompt" rows="5" placeholder="Optional instructions for this conversation"></textarea></label>
-      <div class="form-grid">
-        <label class="field" id="field-temperature">Temperature<input id="temperature" type="number" min="0" max="2" step="0.01" placeholder="Provider default"></label>
-        <label class="field" id="field-topP">Top-p<input id="top-p" type="number" min="0" max="1" step="0.01" placeholder="Provider default"></label>
-        <label class="field" id="field-maxTokens">Output token limit<input id="max-tokens" type="number" min="1" max="1000000" step="1" placeholder="Provider default"></label>
+  <dialog id="preferences-dialog" aria-labelledby="settings-title">
+    <div class="dialog-header"><h2 id="settings-title">Settings</h2><button type="button" class="ghost icon" data-close aria-label="Close Settings" title="Close Settings" data-icon="close"></button></div>
+    <div class="settings-layout">
+      <div id="settings-tabs" class="settings-tabs" role="tablist" aria-label="Settings categories" aria-orientation="vertical">
+        <button type="button" id="settings-connections-tab" role="tab" aria-controls="connections-dialog" aria-selected="true" data-settings-tab="connections"><span data-icon="plug"></span>Connections</button>
+        <button type="button" id="settings-generation-tab" role="tab" aria-controls="generation-dialog" aria-selected="false" tabindex="-1" data-settings-tab="generation"><span data-icon="sliders"></span>Generation</button>
+        <button type="button" id="settings-tools-tab" role="tab" aria-controls="settings-tools-panel" aria-selected="false" tabindex="-1" data-settings-tab="tools"><span data-icon="tools"></span>Tools</button>
+        <button type="button" id="settings-dictation-tab" role="tab" aria-controls="settings-dictation-panel" aria-selected="false" tabindex="-1" data-settings-tab="dictation"><span data-icon="microphone"></span>Dictation</button>
+        <button type="button" id="settings-mcp-tab" role="tab" aria-controls="settings-mcp-panel" aria-selected="false" tabindex="-1" data-settings-tab="mcp"><span data-icon="plug"></span>MCP</button>
+        <button type="button" id="settings-appearance-tab" role="tab" aria-controls="settings-appearance-panel" aria-selected="false" tabindex="-1" data-settings-tab="appearance"><span data-icon="appearance"></span>Appearance</button>
+        <button type="button" id="settings-data-tab" role="tab" aria-controls="settings-data-panel" aria-selected="false" tabindex="-1" data-settings-tab="data"><span data-icon="database"></span>Data</button>
+        <button type="button" id="settings-info-tab" role="tab" aria-controls="settings-info-panel" aria-selected="false" tabindex="-1" data-settings-tab="info"><span data-icon="info"></span>Info</button>
       </div>
-      <div class="form-grid">
-        <label class="field">Tool call budget per turn<input id="tool-calls" type="number" min="1" max="1000000" step="1" placeholder="Off (no call budget)"></label>
-        <label class="field">Tool round budget per turn<input id="tool-rounds" type="number" min="1" max="1000000" step="1" placeholder="Off (no round budget)"></label>
+      <div class="settings-body">
+        <section id="connections-dialog" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-connections-tab" data-settings-panel="connections" tabindex="0">
+          <section class="stack">
+            <h3>Active connection</h3>
+            <label class="field">Connection<select id="provider-select" aria-label="Model connection"><option value="">Add a connection</option></select></label>
+            <div class="row spread"><div class="field"><span class="small">Model</span><span id="active-model">Not selected</span></div><div class="row"><button type="button" class="ghost icon" id="settings-model-button" aria-label="Select model" title="Select model" data-icon="model"></button><button type="button" class="ghost icon" id="refresh-models" aria-label="Refresh model list" title="Refresh model list" data-icon="refresh"></button></div></div>
+          </section>
+          <h3>Connection editor</h3>
+          <form id="connection-form" class="stack">
+            <label class="field">Edit connection<select id="edit-provider"><option value="">New connection</option></select></label>
+            <div class="form-grid"><label class="field">Name<input id="connection-name" required placeholder="Local model server" maxlength="100"></label><label class="field">Base URL<input id="connection-url" type="url" required placeholder="http://localhost:8080/v1"></label></div>
+            <label class="field">API key<input id="connection-key" type="password" autocomplete="new-password" placeholder="Optional. Leave blank to keep the saved key."><small>Saved keys are encrypted on the server and are never returned to the browser.</small></label>
+            <label class="check"><input id="connection-clear-key" type="checkbox">Remove the saved API key</label>
+            <label class="field">Model names<textarea id="connection-models" rows="2" placeholder="One model per line. Leave empty to use the /models endpoint."></textarea></label>
+            <fieldset><legend>Enabled capabilities</legend><div class="checks">
+              <label class="check"><input id="cap-streaming" type="checkbox" checked>Streaming</label>
+              <label class="check"><input id="cap-llamaCppTimings" type="checkbox">Live llama.cpp statistics (llama.cpp only)</label>
+              <label class="check"><input id="cap-vision" type="checkbox">Image input</label>
+              <label class="check" title="Supported native tools are available automatically. Manual review and Run stay separate."><input id="cap-tools" type="checkbox">Function tools</label>
+              <label class="check"><input id="cap-systemPrompt" type="checkbox" checked>System prompts</label>
+              <label class="check"><input id="cap-temperature" type="checkbox" checked>Temperature</label>
+              <label class="check"><input id="cap-topP" type="checkbox" checked>Top-p</label>
+              <label class="check"><input id="cap-maxTokens" type="checkbox" checked>Output token limit</label>
+            </div></fieldset>
+            <label class="field">Token limit parameter<select id="token-parameter"><option value="max_tokens">max_tokens</option><option value="max_completion_tokens">max_completion_tokens</option></select><small>Enable only capabilities supported by the endpoint and selected models. Use separate connections for different capability sets.</small></label>
+            <p class="error" id="connection-error" role="alert"></p>
+            <div class="dialog-footer"><button type="button" class="ghost icon danger" id="delete-provider" aria-label="Delete connection" title="Delete connection" data-icon="trash" hidden></button><button type="submit" class="ghost icon" id="save-provider" aria-label="Save connection" title="Save connection" data-icon="check"></button></div>
+          </form>
+        </section>
+        <section id="generation-dialog" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-generation-tab" data-settings-panel="generation" tabindex="0" hidden>
+          <h3>Generation</h3>
+          <p class="small" id="generation-status">Settings apply to this conversation. Blank fields use provider defaults.</p>
+          <form id="generation-form" class="stack">
+            <label class="field" id="field-systemPrompt">System prompt<textarea id="system-prompt" rows="5" placeholder="Optional instructions for this conversation"></textarea></label>
+            <div class="form-grid">
+              <label class="field" id="field-temperature">Temperature<input id="temperature" type="number" min="0" max="2" step="0.01" placeholder="Provider default"></label>
+              <label class="field" id="field-topP">Top-p<input id="top-p" type="number" min="0" max="1" step="0.01" placeholder="Provider default"></label>
+              <label class="field" id="field-maxTokens">Output token limit<input id="max-tokens" type="number" min="1" max="1000000" step="1" placeholder="Provider default"></label>
+              <label class="field" id="thinking-field" hidden>Thinking level<select id="thinking-level" disabled><option value="">Not available</option></select></label>
+            </div>
+            <div class="form-grid">
+              <label class="field">Tool call budget per turn<input id="tool-calls" type="number" min="1" max="1000000" step="1" placeholder="Off (no call budget)"></label>
+              <label class="field">Tool round budget per turn<input id="tool-rounds" type="number" min="1" max="1000000" step="1" placeholder="Off (no round budget)"></label>
+            </div>
+            <details class="settings-help"><summary>Generation limits</summary><p class="small">Tool budgets are optional and off when blank. A round is one response that requests tools. The final text answer does not count. At a budget, completed work stays saved and the model receives a final-answer request. Argument, context, output, resource, and time limits still apply.</p><p class="small">Unsupported provider controls are hidden. Each response retains its own settings.</p></details>
+            <p id="generation-error" class="error" role="alert"></p>
+            <div class="dialog-footer"><button type="button" class="ghost icon" id="reset-generation" aria-label="Use provider defaults" title="Use provider defaults" data-icon="refresh"></button><button type="submit" class="ghost icon" id="save-generation" aria-label="Save generation settings" title="Save generation settings" data-icon="check"></button></div>
+          </form>
+        </section>
+        <section id="settings-tools-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-tools-tab" data-settings-panel="tools" tabindex="0" hidden>
+          <div class="row spread"><h3>Tools</h3><button type="button" class="ghost icon" id="settings-workspace-button" aria-label="Open files and code" title="Open files and code" data-icon="files"></button></div>
+          <div id="native-tools-panel"></div>
+        </section>
+        <section id="settings-dictation-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-dictation-tab" data-settings-panel="dictation" tabindex="0" hidden>
+          <h3>Dictation</h3><p class="small">Dictation is not implemented. This button opens settings only. Common Chat does not record, transcribe, or send microphone audio.</p>
+          <label class="field">Dictation service<select id="dictation-service" disabled><option>Not implemented</option></select></label>
+        </section>
+        <section id="settings-mcp-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-mcp-tab" data-settings-panel="mcp" tabindex="0" hidden>
+          <h3>MCP</h3><p class="small">Model Context Protocol (MCP) integration is not implemented. No MCP servers are connected. No MCP tools are granted to a model.</p>
+          <label class="field">MCP servers<select id="mcp-servers" disabled><option>Not implemented</option></select></label>
+        </section>
+        <section id="settings-appearance-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-appearance-tab" data-settings-panel="appearance" tabindex="0" hidden>
+          <h3>Appearance</h3><label class="field">Theme<select id="theme-select"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
+        </section>
+        <section id="settings-data-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-data-tab" data-settings-panel="data" tabindex="0" hidden>
+          <section><h3>Conversation history</h3><p class="small">Import JSON, JSONL, or ZIP exports. Repeated imports create separate conversations.</p><div class="row"><button type="button" class="ghost icon" id="import-button" aria-label="Import conversations" title="Import conversations" data-icon="upload"></button><button type="button" class="ghost icon" id="export-all" aria-label="Export all conversations" title="Export all conversations" data-icon="download"></button></div><p class="small">Exports contain messages, branches, and supported attachments. They exclude credentials, connection keys, workspace files, and browser drafts.</p></section>
+          <section><h3>Server storage</h3><p class="small">This version uses one shared owner account. For a full backup, stop the server and use the supported backup procedure. Keep master.key with the database, attachments, and workspace revisions.</p></section>
+          <div class="dialog-footer"><button type="button" class="ghost icon" id="logout" aria-label="Sign out on this device" title="Sign out on this device" data-icon="logout"></button></div>
+        </section>
+        <section id="settings-info-panel" class="settings-panel stack" role="tabpanel" aria-labelledby="settings-info-tab" data-settings-panel="info" tabindex="0" hidden>
+          <section><h3>About</h3><p class="small" id="release-info">Common Chat 0.2 preview.</p><p class="small">A standalone implementation with theme tokens adapted from llama.cpp. An administrator applies updates while the server is idle.</p></section>
+          <section><h3>Composer</h3><p class="small">Enter sends a message. Shift+Enter adds a line. The model icon selects a model. The paperclip opens Upload and Tools. On supported connections, native tools are available automatically. Execution needs a ready runner. Availability is checked before each turn. Manual review and Run stay separate. The microphone opens the inactive Dictation settings.</p><p class="small">Drafts are saved only in this browser. History is stored on this server. Review model output before use. Sign out clears drafts for this server in the current browser.</p></section>
+          <section><h3>Connections and uploads</h3><p class="small">The chat server reaches the model endpoint. The base URL usually ends in /v1. API keys stay on the server. Choose capabilities only when the endpoint and model support them.</p><p id="media-input-hint" class="small"></p><p class="small">Attach at most ten files per message. Each file must not exceed 10 MiB. Audio/video need explicit compatible input protocols and server inspection.</p></section>
+          <section><h3>Files and recovery</h3><p class="small">Workspace files are separate from message attachments. File and code editor buffers remain in this page. Save or copy those edits before reloading. Conversation exports do not replace a full offline backup.</p><p class="small">A response continues if this browser disconnects. A server crash interrupts generation. Saved partial output remains, but generation does not resume automatically.</p></section>
+        </section>
       </div>
-      <p class="small">Tool budgets are optional and off when blank. A round is one response that requests tools. The final text answer does not count. At a budget, completed work stays saved and the model receives a final-answer request. Argument, context, output, resource, and time limits still apply.</p>
-      <p class="small">Unsupported provider controls are hidden. Each response retains its own settings.</p>
-      <p id="generation-error" class="error" role="alert"></p>
-      <div class="dialog-footer"><button type="button" class="ghost" id="reset-generation">Use provider defaults</button><button type="submit" class="primary">Save settings</button></div>
-    </form>
-  </dialog>
-  <dialog id="preferences-dialog">
-    <div class="dialog-header"><h2>Settings and data</h2><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div>
-    <div class="stack">
-      <label class="field">Appearance<select id="theme-select"><option value="system">System</option><option value="dark">Dark</option><option value="light">Light</option></select></label>
-      <section><h3>Conversation history</h3><p class="small">Export messages, branches, and attachments as JSON. Exports do not include login credentials or connection keys.</p><button id="export-all"><span data-icon="download"></span>Export all conversations</button></section>
-      <section><h3>Server storage</h3><p class="small">This version uses one shared owner account. For a full backup, stop the server and copy the data directory. Keep master.key with the database.</p></section>
-      <section><h3>About this version</h3><p class="small" id="release-info">Common Chat 0.2 preview.</p><p class="small">A standalone implementation with theme tokens adapted from llama.cpp. Updates are applied by the administrator while the server is idle. Workspace files and their revisions require a full backup, not a conversation export.</p></section>
-      <div class="dialog-footer"><button id="logout">Sign out on this device</button></div>
     </div>
   </dialog>
-  <dialog id="conversation-dialog">
-    <div class="dialog-header"><h2>Conversation</h2><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div>
-    <form id="rename-form" class="stack"><label class="field">Title<input id="conversation-title" required maxlength="500"></label><button type="submit" class="primary">Save title</button><p class="error" id="conversation-error" role="alert"></p></form>
-    <div class="row spread"><button id="export-conversation">Export conversation</button><button id="delete-conversation" class="danger">Delete conversation</button></div>
+  <dialog id="conversation-dialog" aria-labelledby="conversation-actions-title">
+    <div class="dialog-header"><h2 id="conversation-actions-title">Conversation</h2><div class="row"><button type="button" class="ghost icon" id="refresh-conversation-actions" aria-label="Reload conversation title and status" title="Reload conversation title and status" data-icon="refresh"></button><button type="button" class="ghost icon" data-close aria-label="Close conversation actions" title="Close conversation actions" data-icon="close"></button></div></div>
+    <p id="conversation-status" class="small" role="status" hidden></p>
+    <form id="rename-form" class="stack"><label class="field">Title<input id="conversation-title" required maxlength="500"></label><div class="dialog-footer"><button type="submit" class="ghost icon" id="rename-conversation" aria-label="Save title" title="Save title" data-icon="check"></button></div><p class="error" id="conversation-error" role="alert"></p></form>
+    <div class="row spread"><button type="button" class="ghost icon" id="export-conversation" aria-label="Export conversation" title="Export conversation" data-icon="download"></button><button type="button" id="delete-conversation" class="ghost icon danger" aria-label="Delete conversation" title="Delete conversation" data-icon="trash"></button></div>
   </dialog>
-  <dialog id="import-dialog"><div class="dialog-header"><h2>Import result</h2><button class="ghost icon" data-close aria-label="Close" data-icon="close"></button></div><p id="import-output"></p></dialog>
+  <dialog id="import-dialog" aria-labelledby="import-title"><div class="dialog-header"><h2 id="import-title">Import result</h2><button type="button" class="ghost icon" data-close aria-label="Close import result" title="Close import result" data-icon="close"></button></div><p id="import-output"></p></dialog>
   <div id="toast" hidden role="status"></div>
 </body>
 </html>

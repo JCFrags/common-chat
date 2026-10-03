@@ -6,6 +6,8 @@ import { installWorkspace } from './workspace.js';
 import { installMediaControls, writeMediaCapabilities, readMediaCapabilities, updateMediaHints, validateUpload, attachmentHtml } from './media.js';
 import { installToolControls, toolActivityHtml, generatedFilesHtml } from './tool-controls.js';
 import { createDraftStore, DRAFT_LOGOUT_KEY } from './drafts.js';
+import { installShell } from './ui-shell.js';
+import { installThinkingControls, readThinkingCapabilities, writeThinkingCapabilities, writeThinkingSetting } from './thinking.js';
 const $ = selector => document.querySelector(selector);
 const icons = {
   chat: '<path d="M4 4h16v12H9l-5 4V4Z"/><path d="M8 8h8M8 12h5"/>',
@@ -18,7 +20,19 @@ const icons = {
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
   attach: '<path d="m9 13 6-6a3 3 0 0 1 4 4l-8 8a5 5 0 0 1-7-7l8-8m-5 12 8-8"/>',
   send: '<path d="M12 20V4m-6 6 6-6 6 6"/>', stop: '<rect x="6" y="6" width="12" height="12" rx="1"/>',
-  close: '<path d="m6 6 12 12M6 18 18 6"/>'
+  close: '<path d="m6 6 12 12M6 18 18 6"/>',
+  copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/>',
+  edit: '<path d="m14 5 5 5M4 20l5-1L20 8l-5-5L4 14v6Z"/>',
+  trash: '<path d="M3 6h18M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7M14 10v7"/>',
+  check: '<path d="m5 12 4 4L19 6"/>', previous: '<path d="m14 5-7 7 7 7"/>', next: '<path d="m10 5 7 7-7 7"/>',
+  model: '<rect x="6" y="6" width="12" height="12" rx="3"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/>',
+  thinking: '<path d="M9 18H8a4 4 0 0 1-4-4 4 4 0 0 1 1-7 4 4 0 0 1 7-3 4 4 0 0 1 7 3 4 4 0 0 1 1 7 4 4 0 0 1-4 4h-1M12 4v16M8 8l4 2 4-2M8 14l4-2 4 2"/>',
+  microphone: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
+  tools: '<path d="m14 6 4-4a6 6 0 0 1-7 8L3 18a2 2 0 0 0 3 3l8-8a6 6 0 0 0 8-7l-4 4-4-4Z"/>',
+  files: '<path d="M3 6h7l2 2h9v12H3V6Z"/>', info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7v.1"/>',
+  appearance: '<path d="M12 3a9 9 0 0 0 0 18 9 9 0 0 0 0-18ZM12 3v18"/>',
+  database: '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v7c0 4 16 4 16 0V5M4 12v7c0 4 16 4 16 0v-7"/>',
+  logout: '<path d="M10 3H4v18h6M9 12h12m-5-5 5 5-5 5"/>'
 };
 const icon = name => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[name] ?? icons.chat}</svg>`;
 function fillIcons(root = document) { root.querySelectorAll('[data-icon]').forEach(el => { el.innerHTML = icon(el.dataset.icon); }); }
@@ -26,7 +40,8 @@ fillIcons();
 let draftWarning = '';
 const drafts = createDraftStore({ onWarning: message => { draftWarning = message; renderDraftStatus(); } });
 const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, draftKey: undefined, loading: false, missing: false, openReasoning: new Set(), openStats: new Set(), openTools: new Set(), authenticated: false };
-let events, toastTimer, searchTimer, listTimer, pendingCheck = false, workspaceUI, toolControls;
+let events, toastTimer, searchTimer, listTimer, pendingCheck = false, workspaceUI, toolControls, thinkingControls, shellUI;
+let actionConversation = null, actionLoad = 0, actionReading = false, deletingConversation = null;
 const selectedProvider = () => state.providers.find(p => p.id === $('#provider-select').value);
 const routeId = () => location.hash.slice(1) || null;
 const uuid = () => {
@@ -58,7 +73,7 @@ function toast(message) {
 }
 function showLogin() {
   state.authenticated = false; events?.close(); cancelDiagrams(); cancelPreviews();
-  workspaceUI?.close(); toolControls?.clear();
+  workspaceUI?.close(); toolControls?.clear(); thinkingControls?.close(); shellUI?.closePopups();
   document.querySelectorAll('dialog[open]').forEach(d => d.close());
   $('#app').hidden = true; $('#login-screen').hidden = false; $('#password').focus();
 }
@@ -85,7 +100,7 @@ function restoreDraft(cid) {
 }
 function renderDraftStatus() {
   const footer = $('.composer-footer');
-  footer.textContent = draftWarning || 'Drafts are saved only in this browser. History is stored on this server. Review model output before use.';
+  footer.textContent = draftWarning; footer.hidden = !draftWarning;
   footer.setAttribute('role', 'status');
 }
 async function validateAttachments() {
@@ -108,34 +123,51 @@ function editTargetMissing() {
   return state.editing && state.conversation && !state.conversation.messages.some(m => m.id === state.editing.id && m.role === 'user' && m.parentId === state.editing.parentId);
 }
 function renderDraft() {
-  $('#attachment-list').innerHTML = state.attachments.map(a => `<span class="attachment-chip"><span>${esc(a.name)}${a.missing ? ' (missing, remove and attach again)' : a.unchecked ? ' (not verified)' : ''}</span><button type="button" data-remove-file="${esc(a.id)}" aria-label="Remove ${esc(a.name)}">&times;</button></span>`).join('');
+  $('#attachment-list').innerHTML = state.attachments.map(a => `<span class="attachment-chip"><span>${esc(a.name)}${a.missing ? ' (missing, remove and attach again)' : a.unchecked ? ' (not verified)' : ''}</span><button type="button" class="ghost icon" data-remove-file="${esc(a.id)}" aria-label="Remove ${esc(a.name)}" title="Remove ${esc(a.name)}">${icon('close')}</button></span>`).join('');
   const hasDraft = !!($('#prompt').value || state.attachments.length || state.editing);
-  $('#draft-banner').hidden = !hasDraft && !state.retry && !state.missing;
-  $('#draft-label').textContent = state.retry ? 'Send status is unknown. Retry uses the same request ID.' : state.missing ? 'This conversation is unavailable. Your draft is kept at this address. Copy its text to a new chat.' : editTargetMissing() ? 'The edited message is unavailable. Copy this draft to a new chat or cancel the edit.' : state.editing ? 'Edit creates a new branch. The original stays saved.' : draftWarning ? 'Draft storage needs attention. Your input stays on this page.' : 'Draft saved only on this device.';
+  const warning = state.retry ? 'Send status is unknown. Retry uses the same request ID.' : state.missing ? 'This conversation is unavailable. Your draft is kept at this address. Copy its text to a new chat.' : editTargetMissing() ? 'The edited message is unavailable. Copy this draft to a new chat or cancel the edit.' : state.editing ? 'Edit creates a new branch. The original stays saved.' : '';
+  $('#draft-banner').hidden = !warning; $('#draft-label').textContent = warning;
   $('#cancel-edit').hidden = !!state.retry || !hasDraft;
-  $('#cancel-edit').textContent = state.editing ? 'Cancel edit' : 'Discard draft';
+  const discardLabel = state.editing ? 'Cancel edit' : 'Discard draft';
+  $('#cancel-edit').setAttribute('aria-label', discardLabel); $('#cancel-edit').title = discardLabel;
   $('#cancel-edit').disabled = state.busy;
   $('#prompt').rows = Math.min(10, Math.max(2, $('#prompt').value.split('\n').length));
   renderDraftStatus(); updateControls();
 }
 function updateControls() {
-  toolControls?.refresh(); updateMediaHints(selectedProvider());
+  toolControls?.refresh(); thinkingControls?.refresh(); updateMediaHints(selectedProvider());
+  $('#attach-button').title = `Upload and tools. ${$('#attach-button').title}`;
   const unavailable = state.loading || state.missing || !!state.draftKey && state.conversation?.id !== state.draftKey;
   const running = !!state.conversation?.activeJob || state.conversation?.messages.some(m => m.status === 'streaming');
+  const locked = state.busy || state.loading || !!state.retry;
   $('#stop').hidden = !running;
   $('#stop').disabled = !state.conversation?.activeJob || state.busy;
   $('#send').hidden = running && !state.retry;
   $('#send').disabled = state.busy || state.loading || (!state.retry && (unavailable || editTargetMissing() || state.attachments.some(a => a.missing) || running || !selectedProvider() || !$('#model-input').value.trim() || (!$('#prompt').value.trim() && !state.attachments.length)));
-  $('#send').innerHTML = `${state.retry ? 'Retry send' : 'Send'}${icon('send')}`;
+  const sendLabel = state.retry ? 'Retry send' : 'Send';
+  $('#send').innerHTML = icon('send'); $('#send').title = sendLabel; $('#send').setAttribute('aria-label', sendLabel);
   $('#new-chat').disabled = state.busy || !!state.retry;
   $('#attach-button').disabled = state.busy || unavailable || !!state.retry;
   $('#prompt').disabled = state.busy || !!state.retry;
-  $('#generation-button').disabled = state.busy || unavailable || !!state.retry || running;
+  $('#provider-select').disabled = locked; $('#model-input').disabled = locked; $('#model-button').disabled = locked;
+  const model = $('#model-input').value.trim();
+  $('#model-button').title = model ? `Model: ${model}` : 'Select model';
+  $('#model-button').setAttribute('aria-label', $('#model-button').title); $('#active-model').textContent = model || 'Not selected';
+  $('#refresh-models').disabled = locked || !selectedProvider(); $('#settings-model-button').disabled = locked;
+  $('#generation-button').disabled = locked || unavailable || running;
+  const generationLocked = locked || unavailable || running || !selectedProvider();
+  $('#generation-form').querySelectorAll('input, textarea, button').forEach(control => { control.disabled = generationLocked; });
+  $('#thinking-level').disabled = generationLocked || $('#thinking-field').hidden;
+  $('#generation-status').textContent = !selectedProvider() ? 'Select a connection before saving generation settings.'
+    : running ? 'A response is active. Wait for it to finish before changing generation settings.'
+    : unavailable ? 'This conversation is unavailable. Your draft stays saved.'
+    : 'Settings apply to this conversation. Blank fields use provider defaults.';
+  updateConversationActions();
 }
 function renderList() {
   const current = routeId();
-  $('#conversation-list').innerHTML = state.list.length ? state.list.map(c => `<button class="chat-item ${c.id === current ? 'active' : ''}" data-conversation="${esc(c.id)}" ${c.id === current ? 'aria-current="page"' : ''}><span class="chat-title">${esc(c.title)}</span>${c.running ? '<small>Active</small>' : ''}</button>`).join('')
-    : `<p class="muted sidebar-empty">${$('#search').value ? 'No matching conversations.' : 'Your conversations will appear here.'}</p>`;
+  $('#conversation-list').innerHTML = state.list.length ? state.list.map(c => `<div class="chat-row ${c.id === current ? 'active' : ''}"><button type="button" class="chat-item" data-conversation="${esc(c.id)}" title="${esc(c.title)}" ${c.id === current ? 'aria-current="page"' : ''}><span class="chat-title">${esc(c.title)}</span>${c.running ? '<span class="chat-running" aria-label="Active generation" title="Active generation"></span>' : ''}</button><button type="button" class="ghost icon chat-actions" data-chat-actions="${esc(c.id)}" aria-label="Actions for ${esc(c.title)}" title="Actions for ${esc(c.title)}" aria-haspopup="dialog" aria-controls="conversation-dialog">${icon('more')}</button></div>`).join('')
+    : `<p class="muted sidebar-empty">${$('#search').value ? 'No matching conversations.' : 'No conversations yet.'}</p>`;
 }
 async function refreshList() { if (!state.authenticated) return; state.list = await api(`/api/conversations?q=${encodeURIComponent($('#search').value)}`); renderList(); }
 function scheduleList() { clearTimeout(listTimer); listTimer = setTimeout(() => refreshList().catch(e => toast(e.message)), 100); }
@@ -182,8 +214,8 @@ function messageHtml(m, c) {
   const thinking = m.reasoning ? `<details class="reasoning" data-reasoning="${esc(m.id)}" ${state.openReasoning.has(m.id) ? 'open' : ''}><summary>Reasoning</summary><div class="message-body">${markdown(m.reasoning, { streaming: m.status === 'streaming', conversationId: c.id })}</div></details>` : '';
   const status = m.status === 'complete' ? '' : `<span class="badge">${esc(m.status)}</span>`;
   const body = m.role === 'user' ? esc(m.content) : markdown(m.content, { streaming: m.status === 'streaming', conversationId: c.id });
-  const actions = `<button data-copy="${esc(m.id)}">Copy</button>${m.role === 'user' ? `<button data-edit="${esc(m.id)}" ${active ? 'disabled' : ''}>Edit</button>` : ''}${m.role === 'assistant' ? `<button data-regenerate="${esc(m.id)}" ${active ? 'disabled' : ''}>Regenerate</button>` : ''}`;
-  const branches = siblings.length > 1 ? `<button data-branch="${esc(siblings[Math.max(0,index-1)].id)}" ${index === 0 || active ? 'disabled' : ''}>Previous</button><span class="branch-count">${index+1} / ${siblings.length}</span><button data-branch="${esc(siblings[Math.min(siblings.length-1,index+1)].id)}" ${index === siblings.length-1 || active ? 'disabled' : ''}>Next</button>` : '';
+  const actions = `<button type="button" class="ghost icon" data-copy="${esc(m.id)}" aria-label="Copy message" title="Copy message">${icon('copy')}</button>${m.role === 'user' ? `<button type="button" class="ghost icon" data-edit="${esc(m.id)}" aria-label="Edit message" title="Edit message" ${active ? 'disabled' : ''}>${icon('edit')}</button>` : ''}${m.role === 'assistant' ? `<button type="button" class="ghost icon" data-regenerate="${esc(m.id)}" aria-label="Regenerate response" title="Regenerate response" ${active ? 'disabled' : ''}>${icon('refresh')}</button>` : ''}`;
+  const branches = siblings.length > 1 ? `<button type="button" class="ghost icon" data-branch="${esc(siblings[Math.max(0,index-1)].id)}" aria-label="Previous branch" title="Previous branch" ${index === 0 || active ? 'disabled' : ''}>${icon('previous')}</button><span class="branch-count">${index+1} / ${siblings.length}</span><button type="button" class="ghost icon" data-branch="${esc(siblings[Math.min(siblings.length-1,index+1)].id)}" aria-label="Next branch" title="Next branch" ${index === siblings.length-1 || active ? 'disabled' : ''}>${icon('next')}</button>` : '';
   const error = m.metadata.error ? `<div class="message-error">${esc(m.metadata.error)}</div>` : '';
   const unsupported = m.metadata.unsupportedAttachments?.length ? `<div class="message-error">Archived attachments are retained in the export but cannot be sent: ${m.metadata.unsupportedAttachments.map(esc).join(', ')}.</div>` : '';
   const meta = `${m.providerName ? esc(m.providerName) : ''}${m.metadata.finishReason === 'length' ? ' · Output token limit reached' : ''}`;
@@ -203,8 +235,8 @@ function renderThread(forceBottom = false) {
   document.title = c ? `${c.title} | Common Chat` : 'Common Chat';
   if (!path.length) {
     thread.innerHTML = `<div id="empty-state"><h1>New chat</h1>${state.providers.length
-      ? '<p class="muted">What would you like to talk about?</p>'
-      : `<p class="muted">Add a connection to start chatting.</p><div class="empty-actions"><button class="primary" data-open-connections>${icon('plug')}Add a connection</button></div>`}</div>`;
+      ? ''
+      : `<p class="muted">Add a connection to start chatting.</p><div class="empty-actions"><button type="button" class="ghost icon" data-open-connections aria-label="Add a connection" title="Add a connection">${icon('plug')}</button></div>`}</div>`;
   } else {
     // Keep completed message bodies in place. Replacing an iframe would restart
     // its code on every server update, even when the answer did not change.
@@ -352,7 +384,7 @@ async function sendMessage(event) {
       const providerId = $('#provider-select').value, model = $('#model-input').value.trim();
       const c = state.conversation ?? await createConversation();
       pending = { cid: c.id, body: { requestId: uuid(), expectedVersion: c.version, providerId, model,
-        parentId: state.editing ? state.editing.parentId : c.activeLeaf, content, attachments: attachmentIds, settings: c.settings, tools: toolControls.read() } };
+        parentId: state.editing ? state.editing.parentId : c.activeLeaf, content, attachments: attachmentIds, settings: c.settings, tools: await toolControls.readForTurn() } };
     }
     state.retry = pending; rememberDraft(); renderDraft();
     await api(`/api/conversations/${encodeURIComponent(pending.cid)}/generate`, 'POST', pending.body);
@@ -370,9 +402,10 @@ async function regenerate(messageId) {
   const c = state.conversation, m = c.messages.find(m => m.id === messageId);
   if (!m?.parentId) return;
   state.busy = true; updateControls();
-  const pending = { cid: c.id, body: { requestId: uuid(), expectedVersion: c.version, providerId: $('#provider-select').value,
-    model: $('#model-input').value.trim(), parentId: m.parentId, regenerate: true, settings: c.settings, tools: toolControls.read() } };
   try {
+    const providerId = $('#provider-select').value, model = $('#model-input').value.trim();
+    const pending = { cid: c.id, body: { requestId: uuid(), expectedVersion: c.version, providerId,
+      model, parentId: m.parentId, regenerate: true, settings: c.settings, tools: await toolControls.readForTurn() } };
     state.retry = pending; rememberDraft(); renderDraft();
     await api(`/api/conversations/${c.id}/generate`, 'POST', pending.body);
     await acknowledged(pending);
@@ -423,10 +456,11 @@ async function copyCode(button) {
     toast('Source selected. Use your browser Copy command or press Ctrl+C. On touchscreens, long-press the source to copy.');
   }
 }
-function openConnections() {
-  $('#edit-provider').value = selectedProvider()?.id ?? '';
-  fillConnectionForm(); $('#connections-dialog').showModal();
+function openPreferences(tab = 'connections') {
+  if (tab === 'connections') { $('#edit-provider').value = selectedProvider()?.id ?? ''; fillConnectionForm(); }
+  thinkingControls?.close(); shellUI.openSettings(tab);
 }
+function openConnections() { openPreferences('connections'); }
 function fillConnectionForm() {
   const p = state.providers.find(p => p.id === $('#edit-provider').value);
   $('#connection-name').value = p?.name ?? ''; $('#connection-url').value = p?.baseUrl ?? '';
@@ -435,7 +469,7 @@ function fillConnectionForm() {
   $('#connection-models').value = p?.models.join('\n') ?? '';
   for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens','llamaCppTimings']) $('#cap-'+key).checked = p ? p.capabilities[key] === true : !['vision','llamaCppTimings'].includes(key);
   $('#cap-tools').checked = p?.capabilities.tools === true;
-  writeMediaCapabilities(p?.capabilities);
+  writeMediaCapabilities(p?.capabilities); writeThinkingCapabilities(p?.capabilities);
   $('#token-parameter').value = p?.capabilities.tokenParameter ?? 'max_tokens';
   $('#connection-error').textContent = ''; $('#delete-provider').hidden = !p;
 }
@@ -445,44 +479,59 @@ async function saveProvider(event) {
   for (const key of ['streaming','vision','systemPrompt','temperature','topP','maxTokens','llamaCppTimings']) capabilities[key] = $('#cap-'+key).checked;
   capabilities.tokenParameter = $('#token-parameter').value;
   capabilities.tools = $('#cap-tools').checked;
-  Object.assign(capabilities, readMediaCapabilities());
+  Object.assign(capabilities, readMediaCapabilities(), readThinkingCapabilities());
   try {
     const p = await api(pid ? `/api/providers/${pid}` : '/api/providers', pid ? 'PUT' : 'POST', {
       name: $('#connection-name').value, baseUrl: $('#connection-url').value, apiKey: $('#connection-key').value,
       clearKey: $('#connection-clear-key').checked, models: $('#connection-models').value.split('\n').map(s => s.trim()).filter(Boolean), capabilities
     });
     $('#connection-key').value = ''; await refreshProviders(); $('#provider-select').value = p.id;
-    $('#model-input').value = p.models[0] ?? ''; $('#connections-dialog').close();
+    $('#model-input').value = p.models[0] ?? ''; shellUI.closeSettings();
     await loadModels(false); saveSelection(); renderThread(); toast('Connection saved.');
   } catch (e) { $('#connection-error').textContent = e.message; }
   finally { $('#save-provider').disabled = false; }
 }
-async function openGeneration() {
+function fillGenerationForm() {
+  const opts = state.conversation?.settings ?? {}, caps = selectedProvider()?.capabilities ?? {};
+  $('#system-prompt').value = opts.systemPrompt ?? '';
+  $('#temperature').value = opts.temperature ?? ''; $('#top-p').value = opts.topP ?? ''; $('#max-tokens').value = opts.maxTokens ?? '';
+  $('#tool-calls').value = opts.toolCalls ?? ''; $('#tool-rounds').value = opts.toolRounds ?? '';
+  for (const key of ['systemPrompt','temperature','topP','maxTokens']) $('#field-'+key).hidden = !caps[key];
+  thinkingControls?.refresh(); writeThinkingSetting(opts);
+  $('#generation-error').textContent = ''; updateControls();
+}
+function openGeneration() {
   if (!selectedProvider()) { openConnections(); return; }
-  if (state.conversation?.activeJob || state.busy || state.loading || state.missing || state.retry) return;
-  state.busy = true; updateControls();
-  try {
-    if (!state.conversation) { await createConversation(); renderThread(); scheduleList(); }
-    const opts = state.conversation.settings, caps = selectedProvider().capabilities;
-    $('#system-prompt').value = opts.systemPrompt ?? '';
-    $('#temperature').value = opts.temperature ?? ''; $('#top-p').value = opts.topP ?? ''; $('#max-tokens').value = opts.maxTokens ?? '';
-    $('#tool-calls').value = opts.toolCalls ?? ''; $('#tool-rounds').value = opts.toolRounds ?? '';
-    for (const key of ['systemPrompt','temperature','topP','maxTokens']) $('#field-'+key).hidden = !caps[key];
-    $('#generation-error').textContent = ''; $('#generation-dialog').showModal();
-  } catch (e) { toast(e.message); }
-  finally { state.busy = false; renderDraft(); }
+  openPreferences('generation');
 }
 async function saveGeneration(event) {
-  event.preventDefault(); const caps = selectedProvider()?.capabilities ?? {}, opts = {}, c = state.conversation;
+  event.preventDefault();
+  if ($('#save-generation').disabled) return;
+  const caps = selectedProvider()?.capabilities ?? {}, opts = {};
   if (caps.systemPrompt) opts.systemPrompt = $('#system-prompt').value;
   for (const [key, selector] of [['temperature','#temperature'], ['topP','#top-p'], ['maxTokens','#max-tokens']]) {
     if (caps[key] && $(selector).value !== '') opts[key] = Number($(selector).value);
   }
   for (const [key, selector] of [['toolCalls', '#tool-calls'], ['toolRounds', '#tool-rounds']]) if ($(selector).value !== '') opts[key] = Number($(selector).value);
+  if (!$('#thinking-field').hidden && $('#thinking-level').value) opts.thinking = $('#thinking-level').value;
+  state.busy = true; updateControls();
   try {
+    const c = state.conversation ?? await createConversation();
     state.conversation = await api(`/api/conversations/${c.id}`, 'PATCH', { expectedVersion: c.version, settings: opts });
-    $('#generation-dialog').close(); toast('Conversation settings saved.');
+    shellUI.closeSettings(); renderThread(); scheduleList(); toast('Conversation settings saved.');
   } catch (e) { $('#generation-error').textContent = e.message; if (e.status === 409) await loadCurrent().catch(() => {}); }
+  finally { state.busy = false; renderDraft(); }
+}
+async function changeThinking(value) {
+  if (state.busy || state.loading || state.missing || state.retry || state.conversation?.activeJob) throw new Error('Finish the current chat action before changing thinking.');
+  state.busy = true; updateControls();
+  try {
+    const c = state.conversation ?? await createConversation(), settings = { ...c.settings };
+    if (value) settings.thinking = value; else delete settings.thinking;
+    state.conversation = await api(`/api/conversations/${c.id}`, 'PATCH', { expectedVersion: c.version, settings });
+    writeThinkingSetting(settings); renderThread(); scheduleList();
+  } catch (e) { if (e.status === 409) await loadCurrent().catch(() => {}); throw e; }
+  finally { state.busy = false; renderDraft(); }
 }
 async function readAsBase64(file) {
   return new Promise((resolve, reject) => {
@@ -515,7 +564,7 @@ async function importFile(file) {
   try {
     const result = await api('/api/import', 'POST', { name: file.name, data: await readAsBase64(file) });
     $('#import-output').textContent = `Imported ${result.conversations} conversations and ${result.messages} messages.\n\n${result.warnings.length ? result.warnings.join('\n\n') : 'Branch relationships and supported attachments were imported.'}`;
-    $('#import-dialog').showModal(); await refreshList();
+    shellUI.closeSettings(); $('#import-dialog').showModal(); await refreshList();
     if (!state.conversation && result.conversationIds.length) await navigate(result.conversationIds[0]);
   } catch (e) { toast(e.message); }
   finally { $('#import-button').disabled = false; $('#import-input').value = ''; }
@@ -527,11 +576,66 @@ async function download(path, filename) {
     document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   } catch (e) { toast(e.message); }
 }
+function updateConversationActions() {
+  const c = actionConversation && actionConversation.id === state.conversation?.id && state.conversation.version > actionConversation.version ? state.conversation : actionConversation;
+  const running = !!c?.activeJob || c?.messages.some(m => m.status === 'streaming');
+  const locked = !actionConversation || actionReading || state.busy || !!state.retry || running;
+  $('#rename-conversation').disabled = locked; $('#delete-conversation').disabled = locked;
+  $('#conversation-title').readOnly = locked;
+  $('#export-conversation').disabled = !actionConversation || state.busy || actionReading;
+  $('#refresh-conversation-actions').disabled = !actionConversation || state.busy || actionReading;
+  $('#conversation-status').hidden = !running;
+  $('#conversation-status').textContent = running ? 'A response is active. Rename and delete are unavailable until it finishes.' : '';
+}
+async function openConversationActions(cid) {
+  if (!cid || state.busy || state.loading) return;
+  const request = ++actionLoad;
+  try {
+    const c = await api(`/api/conversations/${encodeURIComponent(cid)}`);
+    if (request !== actionLoad || !state.authenticated) return;
+    actionConversation = c; actionReading = false;
+    $('#conversation-title').value = c.title; $('#conversation-error').textContent = '';
+    updateConversationActions(); $('#conversation-dialog').showModal();
+  } catch (e) { if (request === actionLoad) toast(e.message); }
+}
+async function reloadActionConversation(fillTitle = false) {
+  const c = actionConversation, request = actionLoad;
+  if (!c) return;
+  actionReading = true; updateConversationActions();
+  try {
+    const latest = await api(`/api/conversations/${encodeURIComponent(c.id)}`);
+    if (request !== actionLoad || actionConversation?.id !== c.id || !state.authenticated) return;
+    actionConversation = latest;
+    if (fillTitle) $('#conversation-title').value = latest.title;
+    if (state.conversation?.id === latest.id && state.conversation.version <= latest.version) {
+      state.conversation = latest; renderThread(); renderDraft();
+    }
+    scheduleList(); return latest;
+  } finally { if (request === actionLoad) { actionReading = false; updateConversationActions(); } }
+}
+async function conversationActionError(error) {
+  let message = error.message;
+  if (error.status === 409) {
+    const latest = await reloadActionConversation().catch(() => null);
+    if (latest && !latest.activeJob) message += ` Latest title: "${latest.title}". Review it before trying again.`;
+  } else if (error.status === 404) { actionConversation = null; updateConversationActions(); }
+  $('#conversation-error').textContent = message;
+}
+async function refreshActionActivity(cid) {
+  const target = actionConversation, request = actionLoad;
+  if (!target || target.id !== cid || !$('#conversation-dialog').open || actionReading) return;
+  const latest = await api(`/api/conversations/${encodeURIComponent(cid)}`);
+  if (request !== actionLoad || actionConversation !== target) return;
+  // Keep the action's version and title. A remote edit must still cause a conflict.
+  actionConversation = { ...target, activeJob: latest.activeJob, messages: latest.messages };
+  updateConversationActions();
+}
+function setSyncStatus(message) { $('#sync-status').textContent = message; $('.server-status').title = message; }
 function connectEvents() {
   events?.close(); events = new EventSource('/api/events');
-  events.onopen = () => { $('#sync-status').textContent = 'Connected to server'; };
+  events.onopen = () => { setSyncStatus('Connected to server'); };
   events.onerror = () => {
-    $('#sync-status').textContent = 'Reconnecting to server';
+    setSyncStatus('Reconnecting to server');
     api('/api/session').catch(() => {});
   };
   events.onmessage = async event => {
@@ -542,9 +646,12 @@ function connectEvents() {
       } else if (change.type === 'providers') { await refreshProviders(); await loadModels(false); }
       else if (change.type === 'preferences') { const session = await api('/api/session'); state.preferences = session.settings; applyTheme(); }
       else if (change.type === 'deleted') {
-        if (change.conversationId === state.draftKey) {
+        if (change.conversationId === state.draftKey && change.conversationId !== deletingConversation) {
           cancelPreviews(); state.conversation = null; state.missing = true; renderThread(); renderDraft();
           toast('This conversation was deleted on another device. Your draft is kept at this address.');
+        }
+        if (change.conversationId === actionConversation?.id && change.conversationId !== deletingConversation) {
+          actionConversation = null; updateConversationActions(); $('#conversation-error').textContent = 'This conversation was deleted. No other conversation is selected for these actions.';
         }
         scheduleList();
       } else if (change.type === 'delta') {
@@ -558,6 +665,7 @@ function connectEvents() {
       } else if (change.type === 'changed') {
         scheduleList();
         if (!change.conversationId || change.conversationId === state.conversation?.id || change.conversationId === routeId()) await loadCurrent();
+        if (change.conversationId) await refreshActionActivity(change.conversationId);
         checkPending();
       }
     } catch (e) { if (e.status !== 0) toast(e.message); }
@@ -586,8 +694,12 @@ $('#prompt').addEventListener('input', () => { rememberDraft(); renderDraft(); }
 $('#prompt').addEventListener('keydown', event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); sendMessage(); } });
 $('#new-chat').addEventListener('click', newChat);
 $('#search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => refreshList().catch(e => toast(e.message)), 200); });
-$('#conversation-list').addEventListener('click', event => { const b = event.target.closest('[data-conversation]'); if (b) navigate(b.dataset.conversation); });
-$('#provider-select').addEventListener('change', async () => { $('#model-input').value = ''; await loadModels(false); saveSelection(); updateControls(); });
+$('#conversation-list').addEventListener('click', event => {
+  const action = event.target.closest('[data-chat-actions]');
+  if (action) { openConversationActions(action.dataset.chatActions); return; }
+  const b = event.target.closest('[data-conversation]'); if (b) navigate(b.dataset.conversation);
+});
+$('#provider-select').addEventListener('change', async () => { $('#model-input').value = ''; updateControls(); await loadModels(false); saveSelection(); updateControls(); });
 $('#model-input').addEventListener('input', updateControls);
 $('#model-input').addEventListener('change', saveSelection);
 $('#refresh-models').addEventListener('click', () => loadModels());
@@ -601,8 +713,19 @@ $('#delete-provider').addEventListener('click', async () => {
 });
 $('#generation-button').addEventListener('click', openGeneration);
 $('#generation-form').addEventListener('submit', saveGeneration);
-$('#reset-generation').addEventListener('click', () => { for (const s of ['#system-prompt','#temperature','#top-p','#max-tokens','#tool-calls','#tool-rounds']) $(s).value = ''; });
-$('#preferences-button').addEventListener('click', () => $('#preferences-dialog').showModal());
+$('#reset-generation').addEventListener('click', () => { for (const s of ['#system-prompt','#temperature','#top-p','#max-tokens','#tool-calls','#tool-rounds','#thinking-level']) $(s).value = ''; });
+$('#preferences-button').addEventListener('click', () => openPreferences());
+$('#settings-model-button').addEventListener('click', event => { event.stopPropagation(); thinkingControls?.close(); shellUI.openModel(); });
+$('#model-info-button').addEventListener('click', () => openPreferences('info'));
+$('#dictation-button').addEventListener('click', () => openPreferences('dictation'));
+$('#menu-tool-settings').addEventListener('click', () => openPreferences('tools'));
+function openWorkspace() {
+  thinkingControls?.close(); shellUI.closePopups(); shellUI.closeSettings();
+  const button = $('#workspace-button');
+  if (button) button.click(); else toast('Files and code are unavailable on this page.');
+}
+$('#menu-workspace').addEventListener('click', openWorkspace);
+$('#settings-workspace-button').addEventListener('click', openWorkspace);
 $('#theme-select').addEventListener('change', async () => {
   try { state.preferences = await api('/api/preferences','PUT',{ theme: $('#theme-select').value }); applyTheme(); }
   catch(e) { toast(e.message); }
@@ -621,7 +744,7 @@ $('#logout').addEventListener('click', async () => {
     if (!cleared) { $('#login-error').textContent = draftWarning; toast(draftWarning); }
   } catch(e) { toast(e.message); }
 });
-$('#attach-button').addEventListener('click', () => $('#file-input').click());
+$('#upload-button').addEventListener('click', () => { shellUI.closeUploadMenu(true); $('#file-input').click(); });
 $('#file-input').addEventListener('change', () => uploadFiles([...$('#file-input').files]));
 $('#prompt').addEventListener('paste', event => { const files = [...(event.clipboardData?.files ?? [])]; if (files.length) { event.preventDefault(); uploadFiles(files); } });
 $('#composer').addEventListener('dragover', event => { event.preventDefault(); });
@@ -674,25 +797,44 @@ $('#thread').addEventListener('toggle', event => {
 $('#import-button').addEventListener('click', () => $('#import-input').click());
 $('#import-input').addEventListener('change', () => importFile($('#import-input').files[0]));
 $('#export-all').addEventListener('click', () => download('/api/export', 'common-chat-export.json'));
-$('#conversation-button').addEventListener('click', () => {
-  if (!state.conversation) { toast('Create or open a conversation first.'); return; }
-  $('#conversation-title').value = state.conversation.title; $('#conversation-error').textContent = '';
-  $('#delete-conversation').disabled = !!state.conversation.activeJob; $('#conversation-dialog').showModal();
+$('#conversation-button')?.addEventListener('click', () => {
+  if (state.conversation) openConversationActions(state.conversation.id); else toast('Create or open a conversation first.');
+});
+$('#conversation-dialog').addEventListener('close', () => { actionConversation = null; actionReading = false; actionLoad++; });
+$('#refresh-conversation-actions').addEventListener('click', async () => {
+  if (actionConversation && $('#conversation-title').value !== actionConversation.title && !confirm('Reload the saved title and discard the unsaved title in this dialog?')) return;
+  try { await reloadActionConversation(true); $('#conversation-error').textContent = ''; }
+  catch (e) { await conversationActionError(e); }
 });
 $('#rename-form').addEventListener('submit', async event => {
-  event.preventDefault(); const c = state.conversation;
-  try { state.conversation = await api(`/api/conversations/${c.id}`, 'PATCH', { expectedVersion: c.version, title: $('#conversation-title').value }); $('#conversation-dialog').close(); renderThread(); scheduleList(); }
-  catch (e) { $('#conversation-error').textContent = e.message; if (e.status === 409) await loadCurrent().catch(() => {}); }
-});
-$('#export-conversation').addEventListener('click', () => { if (state.conversation) download(`/api/conversations/${state.conversation.id}/export`, 'conversation.common-chat.json'); });
-$('#delete-conversation').addEventListener('click', async () => {
-  const c = state.conversation; if (!c || state.busy || state.retry || !confirm('Permanently delete this conversation, all branches, its attachments, and its draft on this device?')) return;
+  event.preventDefault(); const c = actionConversation;
+  if (!c || $('#rename-conversation').disabled) return;
+  const title = $('#conversation-title').value;
   state.busy = true; updateControls();
   try {
-    await api(`/api/conversations/${c.id}`, 'DELETE', { expectedVersion: c.version }); $('#conversation-dialog').close();
-    cancelPreviews(); drafts.delete(c.id); history.replaceState(null,'',location.pathname); state.conversation = null; restoreDraft(null); renderThread(); await refreshList();
-  } catch(e) { $('#conversation-error').textContent = e.message; if (e.status === 409) await loadCurrent().catch(() => {}); }
+    const renamed = await api(`/api/conversations/${encodeURIComponent(c.id)}`, 'PATCH', { expectedVersion: c.version, title });
+    if (state.conversation?.id === c.id) { state.conversation = renamed; renderThread(); }
+    $('#conversation-dialog').close(); scheduleList();
+  } catch (e) { await conversationActionError(e); }
   finally { state.busy = false; renderDraft(); }
+});
+$('#export-conversation').addEventListener('click', () => {
+  if (actionConversation) download(`/api/conversations/${encodeURIComponent(actionConversation.id)}/export`, 'conversation.common-chat.json');
+});
+$('#delete-conversation').addEventListener('click', async () => {
+  const c = actionConversation;
+  if (!c || $('#delete-conversation').disabled || !confirm(`Permanently delete "${c.title}", all branches, attachments, workspace files, and its draft on this device?`)) return;
+  state.busy = true; deletingConversation = c.id; updateControls();
+  try {
+    await api(`/api/conversations/${encodeURIComponent(c.id)}`, 'DELETE', { expectedVersion: c.version }); $('#conversation-dialog').close();
+    drafts.delete(c.id);
+    if (state.draftKey === c.id) {
+      cancelPreviews(); cancelDiagrams(); history.replaceState(null, '', location.pathname);
+      state.conversation = null; restoreDraft(null); renderThread(); workspaceUI?.refresh();
+    }
+    await refreshList();
+  } catch(e) { await conversationActionError(e); }
+  finally { deletingConversation = null; state.busy = false; renderDraft(); }
 });
 $('#sidebar-toggle').addEventListener('click', () => $('#app').classList.toggle('sidebar-open'));
 $('#sidebar-backdrop').addEventListener('click', () => $('#app').classList.remove('sidebar-open'));
@@ -713,7 +855,10 @@ window.addEventListener('beforeunload', event => {
   rememberDraft();
   if (drafts.hasUnsaved || state.busy) { event.preventDefault(); event.returnValue = ''; }
 });
+shellUI = installShell({ onSettingsTab: tab => { if (tab === 'generation') fillGenerationForm(); else updateControls(); } });
 installMediaControls();
+thinkingControls = installThinkingControls({ getProvider: selectedProvider, getSettings: () => state.conversation?.settings ?? {},
+  onChange: changeThinking, busy: () => state.busy || state.loading || state.missing || !!state.retry || !!state.conversation?.activeJob, toast });
 toolControls = installToolControls({ api, getProvider: selectedProvider, getConversation: () => state.conversation,
   busy: () => state.busy || state.loading || !!state.retry || !!state.conversation?.activeJob });
 workspaceUI = installWorkspace({ api, getConversation: () => state.conversation,
