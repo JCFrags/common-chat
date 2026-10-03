@@ -49,7 +49,8 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
   const toolbar = document.querySelector('#topbar .toolbar');
   if (!toolbar) throw new Error('The workspace needs the topbar toolbar.');
   if (document.getElementById('workspace-dialog')) throw new Error('The workspace is already installed.');
-  const sessions = new Map();
+  const sessions = new Map(), previewUrls = new Set();
+  const releasePreview = () => { for (const url of previewUrls) URL.revokeObjectURL(url); previewUrls.clear(); };
   let current = null, opening = false, counter = 0, activeSection = 'files', runtime = null, runtimeError = '', runtimeRequest = null, pollTimer, pollRequest = null;
   const launch = node('button', 'ghost workspace-launch', 'Files');
   launch.type = 'button'; launch.id = 'workspace-button'; launch.title = 'Files and code execution';
@@ -92,11 +93,11 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
       <p class="small">Code runs on the configured server runner and can change this conversation's files. Review it before running. Closing this panel does not stop a server job.</p>
       <div class="workspace-actions"><p id="workspace-runtime-status" class="small" role="status"></p><button type="button" class="ghost" id="workspace-runtime-refresh">Check runner</button></div><dl id="workspace-runtime-limits" class="workspace-limits"></dl>
       <div class="workspace-run-controls"><label class="field">Language<select id="workspace-language"><option value="python">Python</option><option value="shell">Shell</option></select></label><label class="check"><input type="checkbox" id="workspace-allow-packages">Allow package downloads from approved registries for this run</label></div>
-      <p class="small">Package access is not general internet access. Execution has no network access. Package permissions do not grant model tool permissions.</p>
+      <p class="small">Each run uses a fresh copied workspace, not a live shared filesystem. Only successful changed outputs become revisions. Python uses headless Agg: save plots and animations to files instead of plt.show(). Package access is registry-only. Execution is offline. These controls do not grant model tools.</p><details><summary>Verified bundled libraries</summary><p id="workspace-inventory" class="small"></p></details>
       <label class="field">Code<textarea id="workspace-code" rows="12" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="Enter code to run"></textarea></label>
       <div class="workspace-actions workspace-run-actions"><button type="button" class="primary" id="workspace-run">Run</button><button type="button" id="workspace-stop" disabled>Stop</button><button type="button" class="ghost" id="workspace-recent">Recent runs</button><span id="workspace-job-status" class="small" role="status"></span></div>
       <p id="workspace-run-error" class="error" role="alert" hidden></p><div id="workspace-recent-list"></div>
-      <div id="workspace-job" hidden><h3>Console</h3><pre id="workspace-console" class="workspace-console" tabindex="0" aria-label="Execution console"></pre><p id="workspace-console-note" class="small"></p><h3 id="workspace-output-title" hidden>Created or changed files</h3><div id="workspace-output-files" class="file-links"></div></div>
+      <div id="workspace-job" hidden><h3>Console</h3><pre id="workspace-console" class="workspace-console" tabindex="0" aria-label="Execution console"></pre><p id="workspace-console-note" class="small"></p><div class="workspace-actions"><button type="button" id="workspace-console-previous">Previous console page</button><button type="button" id="workspace-console-next">Next console page</button><button type="button" id="workspace-console-download">Download full console</button></div><h3 id="workspace-output-title" hidden>Created or changed files</h3><div id="workspace-output-files" class="file-links"></div><p id="workspace-available-note" class="small"></p></div>
       <details id="workspace-packages"><summary>Conversation packages</summary><p class="small">Use package names, optionally with exact versions. One package per line. Python uses name==version. npm uses name@version. URLs, paths, flags, and version ranges are not allowed. Validation can take up to five minutes. You can keep editing while it runs.</p>
         <div class="workspace-package-grid"><label class="field">Python packages<textarea id="workspace-pip" rows="3" spellcheck="false" placeholder="Package names"></textarea></label><label class="field">npm packages<textarea id="workspace-npm" rows="3" spellcheck="false" placeholder="Package names"></textarea></label></div>
         <label class="check"><input type="checkbox" id="workspace-package-consent">Allow these packages to be downloaded from approved registries</label>
@@ -118,7 +119,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
   function errorText(target, message = '') { target.textContent = message; target.hidden = !message; }
   function newContext(conversation) {
     return { cid: conversation.id, title: conversation.title, files: [], limits: {}, usage: null, drafts: new Map(), selected: null, query: '', results: null, indexing: [], searching: false, searchSeq: 0, listReady: false, listRequest: null, loadingPath: null, openSeq: 0, busy: false, error: '',
-      run: { kind: 'python', code: '', allowPackages: false, job: null, starting: false, canceling: false, unknown: false, recent: null, recovering: false, error: '' },
+      run: { kind: 'python', code: '', allowPackages: false, job: null, consoleOffset: 0, starting: false, canceling: false, unknown: false, recent: null, recovering: false, error: '' },
       packages: { pip: '', npm: '', consent: false, dirty: false, loading: false, saving: false, loaded: false, status: '', error: '' } };
   }
   function syncContext() {
@@ -241,7 +242,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     box.append(summary, code, action('Copy citation', () => copyText(text, code), 'ghost')); return box;
   }
   function renderPreview(context, draft) {
-    const root = field('preview'); root.replaceChildren();
+    const root = field('preview'); releasePreview(); root.replaceChildren();
     const content = draft.historical ?? draft.content, file = content?.file ?? draft.file;
     if (draft.historical) {
       const bar = node('div', 'workspace-actions'); bar.append(node('p', 'small', `Viewing ${revisionLabel(file).toLowerCase()}. This is a read-only saved revision.`), action('Return to current file', () => { draft.historical = null; draft.passageOffset = 0; renderPreview(context, draft); })); root.append(bar);
@@ -255,7 +256,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
       const bounded = text.slice(0, PREVIEW_CHARS);
       if (text.length > PREVIEW_CHARS) root.append(node('p', 'small', 'Preview is shortened to 128 Ki characters. The editor and download retain the full source.'));
       if (/\.(?:md|markdown)$/i.test(file.path || draft.path) || file.mime === 'text/markdown') {
-        const body = node('div', 'message-body'); body.innerHTML = markdown(bounded);
+        const body = node('div', 'message-body'); body.innerHTML = markdown(bounded, { conversationId: context.cid });
         // Workspace previews never start artifact frames, scripts, or Mermaid jobs.
         for (const details of body.querySelectorAll('.artifact-source, .diagram-source')) details.open = true;
         root.append(body);
@@ -268,6 +269,16 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
         const image = node('img', 'workspace-image'); image.alt = file.path; image.decoding = 'async'; image.loading = 'lazy'; image.src = `data:${file.mime};base64,${data}`;
         image.addEventListener('error', () => { image.replaceWith(node('p', 'error', 'This image could not be displayed. Download the original file.')); }, { once: true }); root.append(image);
       } else root.append(node('p', 'small', 'Image preview is unavailable or exceeds 10 MiB. Download the original file.'));
+      return;
+    }
+    if (/^(video\/(mp4|webm)|audio\/(wav|mpeg|flac))$/.test(file.mime) && typeof content?.data === 'string') {
+      const data = content.data;
+      if (data.length <= Math.ceil(10 * MiB / 3) * 4 && data.length % 4 === 0 && /^[A-Za-z0-9+/]*={0,2}$/.test(data)) {
+        const media = node(file.mime.startsWith('video/') ? 'video' : 'audio', 'workspace-media');
+        const url = URL.createObjectURL(new Blob([Uint8Array.from(atob(data), char => char.charCodeAt(0))], { type: file.mime }));
+        previewUrls.add(url); media.controls = true; media.preload = 'metadata'; media.src = url; root.append(media);
+        root.append(node('p', 'small', 'Saved media preview. Browser codec support can vary. Download the original file if playback fails.'));
+      } else root.append(node('p', 'small', 'Saved media preview exceeds its limit or is invalid. Download the original.'));
       return;
     }
     const documentFile = /\.(pdf|docx)$/i.test(file.path) || ['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'].includes(file.mime);
@@ -483,6 +494,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     const reasons = Array.isArray(runtime?.blockedReasons) ? runtime.blockedReasons.join(' ') : '';
     field('runtime-status').textContent = runtimeError || (runtimeRequest ? 'Checking runner…' : !runtime ? 'Runner status has not been checked.' : runtimeReady() ? 'Runner available.' : `Code execution is unavailable. ${reasons || (runtime.enabled ? 'The configured runner is not ready.' : 'No runner is enabled.')}`);
     field('runtime-refresh').disabled = !!runtimeRequest;
+    field('inventory').textContent = runtime?.inventory ? `Python ${runtime.inventory.pythonVersion}, Node ${runtime.inventory.nodeVersion}. ${runtime.inventory.python.map(item => `${item.name}==${item.version}`).join(', ')}. Compatible bundled libraries need no installation. Additional wheels must fit 32 MiB and 4096 files.` : 'Verified inventory is unavailable. Do not assume versions.';
     const limits = field('runtime-limits'); limits.replaceChildren();
     for (const [key, value] of Object.entries(runtime?.limits ?? {}).slice(0, 16)) {
       if (typeof value !== 'number' && typeof value !== 'string' && typeof value !== 'boolean') continue;
@@ -491,20 +503,24 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     if (fillInputs) { field('language').value = run?.kind ?? 'python'; field('code').value = run?.code ?? ''; field('allow-packages').checked = run?.allowPackages ?? false; }
     field('code').disabled = field('language').disabled = !context;
     field('allow-packages').disabled = !context || runtime?.packages !== true && !run.allowPackages;
-    field('run').disabled = !context || !runtimeReady() || run.starting || run.unknown || job && !terminalStatuses.has(job.status) || !run.code.trim() || run.allowPackages && runtime?.packages !== true;
+    field('run').disabled = !context || !!getConversation()?.activeJob || !runtimeReady() || run.starting || run.unknown || job && !terminalStatuses.has(job.status) || !run.code.trim() || run.allowPackages && runtime?.packages !== true;
     field('run').textContent = run?.starting ? 'Starting…' : 'Run';
     field('stop').disabled = !job?.id || !activeStatuses.has(job.status) || run?.canceling;
     field('stop').textContent = run?.canceling ? 'Stopping…' : 'Stop';
     field('recent').disabled = !context || run.recovering;
-    field('job-status').textContent = run?.unknown ? 'Start status unknown. Check Recent runs before submitting again.' : job ? `${job.status}${job.exitCode != null ? ` · exit ${job.exitCode}` : ''}` : '';
+    field('job-status').textContent = getConversation()?.activeJob ? 'Stop the active generation before a manual run.' : run?.unknown ? 'Start status unknown. Check Recent runs before submitting again.' : job ? `${job.status}${job.exitCode != null ? ` · exit ${job.exitCode}` : ''} · execution ${job.id}${job.operationId ? ` · runner ${job.operationId}` : ''}` : '';
     errorText(field('run-error'), run?.error);
     field('job').hidden = !job;
     if (job) {
       const output = field('console'), bottom = output.scrollHeight - output.scrollTop - output.clientHeight < 30;
       const text = [typeof job.stdout === 'string' && job.stdout ? `stdout\n${job.stdout}` : '', typeof job.stderr === 'string' && job.stderr ? `stderr\n${job.stderr}` : '', job.error ? `error\n${typeof job.error === 'string' ? job.error : 'Execution failed.'}` : ''].filter(Boolean).join('\n\n');
-      const bounded = text.slice(0, CONSOLE_CHARS);
+      const offset = Math.min(run.consoleOffset ?? 0, Math.max(0, text.length - 1));
+      const bounded = text.slice(offset, offset + CONSOLE_CHARS);
+      run.consoleText = text;
       if (output.textContent !== bounded) { output.textContent = bounded || 'No output yet.'; if (bottom) output.scrollTop = output.scrollHeight; }
-      field('console-note').textContent = text.length > CONSOLE_CHARS ? 'Console display is limited to the first 64 Ki characters. The runner also applies output limits.' : 'Output is bounded by runner limits.';
+      field('console-note').textContent = text.length > CONSOLE_CHARS ? `Showing characters ${offset + 1}–${Math.min(offset + CONSOLE_CHARS, text.length)} of ${text.length}. All saved console output is available through paging or download.` : 'All saved output is shown. Runner output limits still apply.';
+      field('console-previous').disabled = offset === 0; field('console-next').disabled = offset + CONSOLE_CHARS >= text.length;
+      field('available-note').textContent = `${job.files?.length ?? 0} created or changed files. ${job.availableFiles?.length ?? 0} current files remain available in Files. Unchanged files do not get duplicate revisions.`;
       const files = field('output-files'); files.replaceChildren();
       for (const file of (Array.isArray(job.files) ? job.files : []).slice(0, 32)) {
         const path = typeof file === 'string' ? file : file.path; if (typeof path !== 'string') continue;
@@ -530,7 +546,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     try {
       const result = await api(`${prefix(context)}/executions`, 'POST', { kind: run.kind, code: run.code, allowPackages: run.allowPackages });
       if (typeof result.id !== 'string' || typeof result.status !== 'string') { run.unknown = true; throw new Error('The server did not return a usable execution ID. Check Recent runs.'); }
-      run.job = result; run.unknown = false; changed(context, 'execution');
+      run.job = result; run.consoleOffset = 0; run.unknown = false; changed(context, 'execution');
       await pollJob(context);
     } catch (error) {
       run.error = error.message;
@@ -584,7 +600,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
       const job = await api(`${prefix(context)}/executions/${encodeURIComponent(id)}`);
       if (job.id !== id || typeof job.status !== 'string') throw new Error('The server returned an invalid execution status.');
       if (activeStatuses.has(context.run.job?.status) && context.run.job.id !== id && !confirm('A different run is active. View this run instead? The active run will not be stopped.')) return;
-      context.run.job = job; context.run.unknown = false; context.run.error = '';
+      context.run.job = job; context.run.consoleOffset = 0; context.run.unknown = false; context.run.error = '';
       if (activeStatuses.has(job.status)) pollJob(context);
       else { listFiles(context); changed(context, 'execution'); }
     } catch (error) { context.run.error = error.message; }
@@ -619,10 +635,12 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     const pip = packages.pip.split(/\r?\n/).map(value => value.trim()).filter(Boolean), npm = packages.npm.split(/\r?\n/).map(value => value.trim()).filter(Boolean), original = [packages.pip, packages.npm];
     packages.saving = true; packages.error = ''; renderPackages();
     try {
-      await api(`${prefix(context)}/packages`, 'POST', { pip, npm, allowPackages: true });
+      const result = await api(`${prefix(context)}/packages`, 'POST', { pip, npm, allowPackages: true });
+      context.run.job = result; context.run.consoleOffset = 0;
+      if (!result.saved) { packages.error = `${result.error ?? 'Package validation failed.'} Execution: ${result.id}. The previous saved list is unchanged. See Console.`; return; }
       packages.loaded = true; packages.dirty = packages.pip !== original[0] || packages.npm !== original[1]; packages.status = packages.dirty ? 'The submitted package list was saved. Later edits are still unsaved.' : 'Packages validated and saved.'; changed(context, 'execution');
     } catch (error) { packages.error = `${error.message}${error.status === 0 ? ' The install result is unknown. Load the saved list before resubmitting.' : ''}`; }
-    finally { packages.saving = false; if (visible(context)) renderPackages(); }
+    finally { packages.saving = false; if (visible(context)) { renderPackages(); renderRun(); } }
   }
 
   async function refresh() {
@@ -630,7 +648,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     await listFiles(context);
     if (context.run.job && activeStatuses.has(context.run.job.status)) pollJob(context);
   }
-  function close() { clearTimeout(pollTimer); if (dialog.open) dialog.close(); }
+  function close() { clearTimeout(pollTimer); for (const media of field('preview').querySelectorAll('audio, video')) media.pause(); releasePreview(); if (dialog.open) dialog.close(); }
   async function open() {
     if (opening) return; opening = true; launch.disabled = true;
     try {
@@ -642,7 +660,7 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
     finally { opening = false; launch.disabled = false; }
   }
   launch.addEventListener('click', open); field('close').addEventListener('click', close);
-  dialog.addEventListener('close', () => { clearTimeout(pollTimer); });
+  dialog.addEventListener('close', () => { clearTimeout(pollTimer); for (const media of field('preview').querySelectorAll('audio, video')) media.pause(); releasePreview(); });
   for (const name of ['files', 'run']) field(`${name}-tab`).addEventListener('click', () => selectSection(name));
   installTabKeys(['files', 'run'], selectSection);
   const selectView = name => { const draft = selected(current); if (!draft) return; draft.view = name; renderFile({ preserveInput: true }); if (name === 'history' && !draft.history) loadHistory(current, draft); };
@@ -671,5 +689,22 @@ export function installWorkspace({ api, getConversation, ensureConversation, onC
   window.addEventListener('beforeunload', event => {
     if ([...sessions.values()].some(context => [...context.drafts.values()].some(dirty) || context.run.code.trim() || context.packages.dirty || context.packages.saving)) { event.preventDefault(); event.returnValue = ''; }
   });
-  return { refresh, close };
+  async function openFile(path, revision) { await open(); if (!current || !dialog.open) return; selectSection('files'); await openPath(current, path, { revision }); }
+  async function openExecution(id) { await open(); if (!current || !dialog.open) return; selectSection('run'); await recoverJob(current, id); }
+  async function openCode(code) {
+    if (!code.trim() || utf8Size(code) > 64 * 1024) { toast('Python source must be nonempty and at most 64 KiB.'); return; }
+    await open(); if (!current || !dialog.open) return;
+    if (current.run.code && current.run.code !== code && !confirm('Replace the unsaved Run code draft with this Python source?')) return;
+    current.run.kind = 'python'; current.run.code = code;
+    // Review first. Opening source never executes it or changes package consent.
+    selectSection('run'); renderRun(true); field('code').focus(); toast('Review the Python source, then press Run. No code has run yet.');
+  }
+  field('console-previous').addEventListener('click', () => { if (current) { current.run.consoleOffset = Math.max(0, current.run.consoleOffset - CONSOLE_CHARS); renderRun(); } });
+  field('console-next').addEventListener('click', () => { if (current) { current.run.consoleOffset += CONSOLE_CHARS; renderRun(); } });
+  field('console-download').addEventListener('click', () => {
+    if (!current?.run.job) return;
+    const url = URL.createObjectURL(new Blob([current.run.consoleText ?? ''], { type: 'text/plain' }));
+    const link = node('a'); link.href = url; link.download = `execution-${current.run.job.id}.txt`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  return { refresh, close, openFile, openExecution, openCode };
 }

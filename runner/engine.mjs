@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { limits } from './policy.mjs';
+import { packageConsole } from './errors.mjs';
 
 const label = 'org.common-chat.runner.owner';
 function environment() {
@@ -40,6 +41,16 @@ export class PodmanEngine {
       if (!/^[a-f0-9]{12,64}$/.test(id)) throw new Error('Invalid owned container identity.');
       await this.command(['rm', '--force', id]);
     }
+    // The inventory comes from the same pinned, isolation-checked image used by every operation.
+    const worker = await this.start({ operationId: `inventory-${randomUUID()}` });
+    try {
+      const inventory = worker.isolation.inventory;
+      if (!inventory || !Array.isArray(inventory.python) || inventory.python.length > 128 ||
+          inventory.python.some(item => !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(item.name) || !/^[0-9][A-Za-z0-9.!+_-]{0,59}$/.test(item.version)) ||
+          !/^\d+\.\d+\.\d+$/.test(inventory.pythonVersion) || !/^v\d+\.\d+\.\d+$/.test(inventory.nodeVersion)) throw new Error('Invalid worker image inventory. Rebuild the documented image.');
+      this.inventory = { imageId: this.imageId.replace(/^sha256:/, ''), pythonVersion: inventory.pythonVersion,
+        nodeVersion: inventory.nodeVersion, python: inventory.python.map(({ name, version }) => ({ name, version })) };
+    } finally { await worker.stop(); }
   }
   async start({ operationId, registry }) {
     if (!this.imageId) throw new Error('Runner image is not ready.');
@@ -86,7 +97,15 @@ class Worker {
           const pending = this.pending.get(response.id);
           if (!pending) throw new Error('Unexpected worker response.');
           this.pending.delete(response.id); clearTimeout(pending.timer);
-          response.ok ? pending.resolve(response.value) : pending.reject(new Error(String(response.error).slice(0, 2500)));
+          if (response.ok) pending.resolve(response.value);
+          else {
+            const error = new Error(String(response.error).slice(0, 2500));
+            if (response.diagnostics) error.diagnostics = {
+              stdout: packageConsole(response.diagnostics.stdout), stderr: packageConsole(response.diagnostics.stderr),
+              exitCode: Number.isSafeInteger(response.diagnostics.exitCode) && response.diagnostics.exitCode >= 0 && response.diagnostics.exitCode <= 255 ? response.diagnostics.exitCode : null
+            };
+            pending.reject(error);
+          }
         } catch (error) { this.fail(error); void this.stop().catch(() => {}); }
       }
     });

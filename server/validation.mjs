@@ -23,7 +23,7 @@ export function integer(value, label, min, max) {
 }
 export function settings(value = {}) {
   object(value, 'settings');
-  const allowed = new Set(['systemPrompt', 'temperature', 'topP', 'maxTokens']);
+  const allowed = new Set(['systemPrompt', 'temperature', 'topP', 'maxTokens', 'toolCalls', 'toolRounds']);
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(400, `Unknown setting: ${key}.`);
   const result = {};
   if ('systemPrompt' in value) result.systemPrompt = text(value.systemPrompt, 'systemPrompt', 100000, true);
@@ -35,6 +35,10 @@ export function settings(value = {}) {
   }
   if (value.maxTokens !== undefined && value.maxTokens !== null && value.maxTokens !== '') {
     result.maxTokens = integer(value.maxTokens, 'maxTokens', 1, 1000000);
+  }
+  // These are local work budgets, not provider sampling controls. Omission disables them.
+  for (const key of ['toolCalls', 'toolRounds']) {
+    if (value[key] !== undefined && value[key] !== null && value[key] !== '') result[key] = integer(value[key], key, 1, 1000000);
   }
   return result;
 }

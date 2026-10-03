@@ -12,7 +12,7 @@ Tools are opt-in. A connection must enable `capabilities.tools`, which defaults 
 }
 ```
 
-Omitted permissions are false. Permissions apply only to that submission, including its bounded follow-up rounds. Regeneration needs a new grant. Saved permissions, imported records, model arguments, and document text cannot grant permission.
+Omitted permissions are false. Permissions apply only to that submission and its follow-up rounds. Regeneration needs a new grant. Saved permissions, imported records, model arguments, and document text cannot grant permission.
 
 - `workspace` permits file listing, bounded reading, text replacement, and search in the current conversation workspace.
 - `execute` permits Python and POSIX shell in the separately configured isolated runner. An execution receives a copied snapshot of the current conversation workspace and can produce file revisions. It therefore permits workspace access through code even if direct workspace tools are off.
@@ -38,12 +38,28 @@ All argument objects reject unknown fields. Text writes require the current revi
 
 The app assembles streamed call fragments by index. A round executes only after an explicit `finish_reason: "tool_calls"`, complete function names and JSON arguments, and unique call IDs. The app validates every call in the round before executing the first call. A `[DONE]` marker alone does not authorize a tool. Legacy `function_call` responses, incomplete calls, duplicate IDs, unsupported tools, and undeclared arguments fail explicitly.
 
-The bounds per generation are:
+Optional local work budgets belong in generation `settings`:
 
-- Eight provider requests, including the final answer. Calls in the eighth response are not executed because no follow-up request remains.
-- Sixteen tool calls with unique IDs across that generation.
-- 128 KiB argument JSON per call and 256 KiB across all calls.
-- 64 KiB result JSON per call and 1 MiB of saved transcript JSON. A round reserves space for its results before execution. Large batches can reach this bound before the call-count bound.
+```json
+{
+  "settings": {
+    "toolCalls": 20,
+    "toolRounds": 10
+  }
+}
+```
+
+Each budget defaults to off. Omit the field, use `null`, or use an empty string to disable it. Enabled values must be integers from 1 through 1,000,000. These settings are not sent as provider sampling controls. There is no fixed eight-request or sixteen-call cap.
+
+The call budget counts dispatched calls, including calls that fail. The round budget counts batches with at least one dispatched call, not provider requests or the final answer. A partial batch executes only its admitted prefix. The app saves all call records, pending placeholders, and blocked results before the first side effect. Blocked calls do not run. Invalid arguments or permission attempts still fail whole-batch validation before any side effect.
+
+When either budget is reached, the app preserves completed results and files, removes tool definitions, and requests one final answer from the provider. It does not replay calls. If the provider requests tools again or the deadline expires, the generation ends with the saved work and a clear error.
+
+The required safety bounds per generation remain:
+
+- Unique call IDs across that generation and 1 MiB of tool-fragment JSON per response.
+- 128 KiB argument JSON per call and 256 KiB across all calls, including blocked calls.
+- 64 KiB result JSON per call and 1 MiB of saved transcript JSON. A round reserves space for its results before execution. A large batch can reach this bound even with work budgets off.
 - 64 KiB of code or direct text-file content per call.
 - One total generation deadline, including validation, provider calls, tools, and dependency work. The default is 15 minutes.
 
@@ -53,11 +69,14 @@ Tools run sequentially. A tool failure becomes a bounded error result, so the mo
 
 Assistant metadata adds:
 
-- `toolActivity`: call ID, tool name, state, a short summary, revision-specific download links, and bounded stdout/stderr summaries for code execution.
-- `toolTranscript`: bounded assistant/tool protocol messages for later model context. These are historical messages, not an execution queue.
-- `toolPermissions`: the permissions granted to this submission, for display and provenance only.
+- `toolActivity`: call ID, tool name, state, a short summary, revision-specific download links, and bounded stdout/stderr summaries for code execution. Execution activity also includes `executionId`, optional runner `operationId`, exit code, and safe error text.
+- `toolTranscript`: bounded assistant/tool protocol messages for later model context. These are historical messages, not an execution queue. Normal message responses hide this field.
+- `toolPermissions`: the permissions granted to this submission, for display and provenance only. Normal message responses expose only the three permission booleans for an assistant owned by a local job. Imported grants remain archived and hidden. This field never grants future permission.
+- `toolBudget`: `callLimit` and `roundLimit`, each `null` when off, `executedCalls`, `executedRounds`, and `stopReason`, which is `null` until a work budget stops tools. Limits and counters use distinct fields.
 
-Activity does not include host paths or engine errors. File links point to authenticated workspace downloads. The execution API retains bounded full stdout/stderr. Tool context receives at most 8000 bytes per stream and eight output file links, with a total file count. Display activity can include all changed file links. Render all text as untrusted content.
+Activity does not include host paths or engine errors. File links point to authenticated workspace downloads. The execution API retains bounded full stdout/stderr. Tool context receives at most 8000 bytes per stream and eight links each in `files` and `availableFiles`, with `totalFiles` and `totalAvailableFiles`. Long paths can reduce those link counts to keep the 64 KiB result bound. Display activity can include all changed file links in `files` and the same bounded current links in `availableFiles`. Render all text as untrusted content.
+
+For execution receipts, `files` means revisions created or changed by that operation. `availableFiles` means stored current files, not proof that the operation created or tested them. An empty `files` list does not mean the workspace is empty. A same-bytes `write_workspace` returns `changed: false`, no new `files`, and its existing target revision in `availableFiles`. The app does not create another revision for that write. Both the result and display activity preserve this distinction.
 
 Before a side effect, the app saves protocol-valid pending result placeholders. If the server stops before a result is saved, the placeholder tells the next model to inspect current state before retrying. The app never replays a tool automatically.
 
@@ -69,17 +88,17 @@ These routes use the app's existing authentication, Host/Origin checks, and same
 
 | Method | Path | Result |
 | --- | --- | --- |
-| GET | `/api/runtime` | `{enabled, ready, packages, limits, blockedReasons}`. |
+| GET | `/api/runtime` | `{enabled, ready, packages, limits, inventory, blockedReasons}`. Verified bundled inventory can be `null`. |
 | POST | `/api/conversations/:cid/executions` | Submit `{kind: "python" or "shell", code, allowPackages: boolean}`. Return `{id, status}` with HTTP 202. |
 | GET | `/api/conversations/:cid/executions` | `{executions: [...]}` with the 20 most recent compact records. |
-| GET | `/api/conversations/:cid/executions/:id` | `{id, kind, status, stdout, stderr, exitCode, files, error, createdAt, updatedAt}`. |
+| GET | `/api/conversations/:cid/executions/:id` | `{id, operationId, kind, status, stdout, stderr, exitCode, files, availableFiles, fileNote, error, createdAt, updatedAt}`. |
 | POST | `/api/conversations/:cid/executions/:id/cancel` | `{id, status}`. Cancellation is idempotent for terminal jobs. |
 | GET | `/api/conversations/:cid/packages` | `{pip: [], npm: []}`. |
-| POST | `/api/conversations/:cid/packages` | Verify and replace specifications from `{pip: [], npm: [], allowPackages: true}`. Return the resolved specifications. |
+| POST | `/api/conversations/:cid/packages` | Verify specifications from `{pip: [], npm: [], allowPackages: true}`. Return the saved `pip`/`npm` list, execution result, both IDs, and `saved`. A terminal failure keeps the prior saved list. |
 
 A lost execution POST response is not permission to replay code. Read recent executions and the current workspace before submitting again. Execution POST intentionally has no automatic retry. Package changes appear in the execution list as `kind: "packages"`, so a client can inspect or cancel an uncertain package request.
 
-Package arrays contain strings. Use a PyPI name, optionally with `==version`, or an npm name, including `@scope/name`, optionally with an exact `@major.minor.patch` version. Prerelease/build versions are allowed. Use at most 32 distinct names in total, with at most 200 characters per specification. URLs, paths, flags, alternate indexes, Git sources, extras, and version ranges are not supported. `install_packages` and the package POST replace the entire saved specification list. They do not append to it. Only successful verification saves resolved specifications. Dependency directories never become workspace revisions.
+Package arrays contain strings. Use a PyPI name, optionally with `==version`, or an npm name, including `@scope/name`, optionally with an exact `@major.minor.patch` version. Prerelease/build versions are allowed. Use at most 32 distinct names in total, with at most 200 characters per specification. URLs, paths, flags, alternate indexes, Git sources, extras, and version ranges are not supported. `install_packages` and the package POST replace the entire saved specification list. They do not append to it. Only successful verification saves resolved specifications. Dependency directories never become workspace revisions. A package tool receipt includes its execution ID, status, and `saved` flag. A failed verification must not claim that packages were saved.
 
 Execution states are `running`, `complete`, `error`, `cancelled`, `timed_out`, and `interrupted`. There is one active execution or package operation per conversation. A user execution cannot overlap a generation. A model-owned tool can bypass only its own generation's busy check, never another execution or generation.
 

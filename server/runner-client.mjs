@@ -2,6 +2,7 @@ import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import { filePath, hash, limits, packageSpecs } from '../runner/policy.mjs';
+import { runnerFailure } from '../runner/errors.mjs';
 
 export class RunnerClient {
   constructor({ socketPath } = {}) { this.socketPath = socketPath; }
@@ -34,12 +35,12 @@ export class RunnerClient {
       req.on('error', reject); req.end(body);
     });
   }
-  async capabilities() {
+  async capabilities({ signal } = {}) {
     if (!this.socketPath) return { enabled: false, ready: false, packages: false, limits, blockedReasons: ['The isolated runner is not configured.'] };
     try {
-      const result = await this.request('/v1/capabilities', { maximum: 65536 });
+      const result = await this.request('/v1/capabilities', { maximum: 65536, signal });
       return { ...result, enabled: true, ready: result.ready === true, packages: result.packages === true };
-    } catch (error) { return { enabled: true, ready: false, packages: false, limits, blockedReasons: [error.message] }; }
+    } catch (error) { return { enabled: true, ready: false, packages: false, limits, blockedReasons: [runnerFailure(error)] }; }
   }
   async operation({ workspaceId, kind, code = '', files = [], packages = {}, signal }) {
     if (!Array.isArray(files) || files.length > limits.files) throw new Error('Too many runner input files.');
@@ -80,7 +81,9 @@ export class RunnerClient {
         outputs.push({ path: file.path, mime: file.mime, bytes });
       }
       bounded.throwIfAborted();
-      return { ...result, files: outputs };
+      return { ...result, operationId: id, error: result.error ? runnerFailure(result.error) : null, files: outputs };
+    } catch (error) {
+      error.operationId = id; error.publicMessage = runnerFailure(error); throw error;
     } finally {
       // Cancellation never uses the already-aborted signal. The broker must stop
       // the actual container even after the caller has closed its HTTP request.
@@ -91,12 +94,12 @@ export class RunnerClient {
   async execute(input) {
     if (!['python', 'shell'].includes(input.kind)) throw new Error('Execution kind must be python or shell.');
     const result = await this.operation(input);
-    return { status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.exitCode ?? null, error: result.error ?? null, files: result.files };
+    return { operationId: result.operationId, status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.exitCode ?? null, error: result.error ?? null, files: result.files };
   }
   async install({ workspaceId, packages, signal }) {
     const result = await this.operation({ workspaceId, kind: 'install', packages, signal });
-    if (result.status !== 'complete') throw new Error(result.error ?? 'Package installation failed.');
-    return { packages: packageSpecs(result.packages), summary: String(result.summary ?? 'Packages installed in isolated scratch.').slice(0, 1000) };
+    return { operationId: result.operationId, status: result.status, stdout: result.stdout ?? '', stderr: result.stderr ?? '', exitCode: result.exitCode ?? null,
+      error: result.error, ...(result.status === 'complete' ? { packages: packageSpecs(result.packages) } : {}), summary: String(result.summary ?? '').slice(0, 1000) };
   }
   async extractDocument({ path, mime, bytes, signal }) {
     const result = await this.operation({ workspaceId: `document-${randomUUID()}`, kind: 'document', files: [{ path, mime, bytes }], signal });

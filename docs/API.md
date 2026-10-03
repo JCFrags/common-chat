@@ -41,7 +41,7 @@ When supplied, `Origin` must equal `PUBLIC_URL`. Host validation also applies to
 | POST | `/api/conversations/:id/workspace/restore` | Copy an earlier revision into a new head. |
 | GET | `/api/conversations/:id/workspace/search` | Search current document passages with `?q=...&limit=...`. |
 | GET | `/api/conversations/:id/workspace/download` | Download exact bytes with `?path=...&revision=...`. |
-| GET | `/api/runtime` | Read optional execution readiness, limits, and blocked reasons. |
+| GET | `/api/runtime` | Read optional execution readiness, limits, verified bundled inventory, and sanitized blocked reasons. |
 | GET, POST | `/api/conversations/:id/executions` | List recent executions or submit an isolated Python/shell operation. |
 | GET | `/api/conversations/:id/executions/:executionId` | Read status, bounded output, and saved file links. |
 | POST | `/api/conversations/:id/executions/:executionId/cancel` | Cancel an execution or package operation. |
@@ -111,6 +111,8 @@ An identical retry must preserve the entire request object and request ID. The s
 
 Regeneration sets `regenerate: true` and uses a user message ID as `parentId`. It supplies no new content or attachments. Message editing creates a normal submission under the original user's parent node.
 
+Optional `settings.toolCalls` and `settings.toolRounds` are local per-turn work budgets. Each accepts an integer from 1 to 1000000. Omit a budget to turn it off. These settings are not sent as provider sampling controls. The final text answer does not count as a tool round. A reached budget preserves completed work, records blocked calls without dispatch, and requests a final answer from saved results.
+
 Omitted tool permissions are false. `workspace` enables scoped file tools. `execute` enables isolated Python/shell access to a copied conversation workspace, even if direct workspace tools are off. `packages` permits package verification and restoration of saved dependencies. Permissions apply only to this submission and its bounded follow-up rounds. Regeneration requires a new grant. Imported permissions, model arguments, and document contents cannot grant permission. See [TOOLS.md](TOOLS.md).
 
 ## Event handling
@@ -121,7 +123,7 @@ The `delta` event contains an updated message and conversation version. It is a 
 
 Assistant message metadata includes validated `usage`, `timings`, `promptProgress`, and `observed`. Upstream `prompt_progress` maps to `promptProgress: { total, cache, processed, time_ms }`. Processed includes cached tokens. The last progress sample remains after completion. Later validated values replace earlier values. `observed.durationMs` updates from the monotonic server clock and becomes the final duration when the job ends. Missing upstream counts or rates are not estimated. These fields persist in native exports without a schema migration.
 
-Tool-enabled assistant metadata can include `toolActivity` for display, `toolTranscript` for eligible local provider continuation, and `toolPermissions` for provenance. These fields are not an execution queue. Imported transcripts and permissions are archived rather than accepted as local authority. Render activity and execution output as untrusted text. See [saved tool history](TOOLS.md#visible-activity-and-saved-history).
+Tool-enabled assistant metadata can include `toolActivity` for display and `toolBudget` with `callLimit`, `roundLimit`, `executedCalls`, `executedRounds`, and `stopReason`. A null limit means off. Visible `toolPermissions` records only validated local-job grant booleans for provenance. The private saved `toolTranscript` is used only for eligible local provider continuation. These fields are not an execution queue. Imported transcripts and permissions are archived rather than accepted as local authority. Render activity and execution output as untrusted text. See [saved tool history](TOOLS.md#visible-activity-and-saved-history).
 
 SSE does not supply a persistent replay cursor. A missed event is resolved with an authoritative snapshot. Client disconnection never implies cancellation. Workspace mutations update the conversation version, so a stale generation or file edit must reread current state.
 

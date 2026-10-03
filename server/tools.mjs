@@ -1,7 +1,7 @@
-import { fail, object, text, integer } from './validation.mjs';
+import { fail, hash, object, text, integer } from './validation.mjs';
 import { executionCode, packageSpecs, fileLink } from './executions.mjs';
 
-export const TOOL_LIMITS = Object.freeze({ rounds: 8, calls: 16, argumentBytes: 128 * 1024,
+export const TOOL_LIMITS = Object.freeze({ argumentBytes: 128 * 1024,
   totalArgumentBytes: 256 * 1024, resultBytes: 64 * 1024, transcriptBytes: 1024 * 1024 });
 const own = (value, keys, label) => {
   object(value, label);
@@ -31,6 +31,18 @@ function clip(value, bytes) {
   // The decoder drops an incomplete final UTF-8 sequence rather than inventing text.
   return new TextDecoder('utf-8').decode(Buffer.from(value).subarray(0, bytes), { stream: true });
 }
+function executionReceipt(result) {
+  const files = result.files ?? [], availableFiles = result.availableFiles ?? [];
+  const receipt = { ...result, files: files.slice(0, 8), totalFiles: files.length,
+    availableFiles: availableFiles.slice(0, 8), totalAvailableFiles: availableFiles.length,
+    stdout: clip(result.stdout, 8000), stderr: clip(result.stderr, 8000),
+    outputTruncated: Buffer.byteLength(result.stdout) > 8000 || Buffer.byteLength(result.stderr) > 8000 };
+  // Long portable paths and JSON escaping can exceed the result bound even with eight links.
+  for (const key of ['availableFiles', 'files']) {
+    while (receipt[key].length && Buffer.byteLength(JSON.stringify(receipt)) > TOOL_LIMITS.resultBytes) receipt[key].pop();
+  }
+  return receipt;
+}
 const string = (description, maxLength) => ({ type: 'string', description, maxLength });
 const number = (maximum, minimum = 0) => ({ type: 'integer', minimum, maximum });
 function schema(name, description, properties, required = []) {
@@ -40,21 +52,23 @@ const schemas = [
   ['workspace', schema('list_workspace', 'List current workspace file revisions. Deleted files retain a head revision. Paths are relative to this conversation, not the host.', { offset: number(128), limit: number(50, 1) })],
   ['workspace', schema('read_workspace', 'Read bounded text or extracted PDF/DOCX passages from this conversation workspace. Read a revision before editing it. Binary bytes are not decoded as text.', { path: string('Relative workspace path.', 512), offset: number(1048576), limit: number(8192, 1) }, ['path'])],
   ['workspace', schema('write_workspace', 'Create or revise one UTF-8 text file. Use the exact current revision, including a deleted head, or null for a new path. Create DOCX/PDF with runner libraries instead.', { path: string('Relative workspace path.', 512), text: string('Complete replacement UTF-8 text, at most 64 KiB.', 65536), expectedRevision: { type: ['string', 'null'], description: 'Current revision from list/read, or null for a new path.' }, expectedSha256: { type: ['string', 'null'], description: 'Optional current SHA-256.' } }, ['path', 'text', 'expectedRevision'])],
-  ['workspace', schema('search_workspace', 'Search indexed current workspace text and extracted PDF/DOCX passages. Results include revision-specific citations. Unindexed files are reported separately.', { query: string('One to sixteen search words.', 500), limit: number(10, 1) }, ['query'])],
-  ['execute', schema('run_python', 'Run Python in the isolated runner with a copied snapshot of this conversation workspace. Save outputs to relative workspace paths. DOCX/PDF and plots can use installed runner libraries. No host access or general network. Saved package restoration needs user package permission.', { code: string('Python source, at most 64 KiB.', 65536) }, ['code'])],
-  ['execute', schema('run_shell', 'Run POSIX shell in the isolated runner with a copied snapshot of this conversation workspace. Node can be invoked here. No host access or general network. Only successful bounded outputs become new file revisions.', { code: string('Shell source, at most 64 KiB.', 65536) }, ['code'])],
+  ['workspace', schema('search_workspace', 'Keyword search of indexed current workspace text and extracted PDF/DOCX passages, not semantic search. Results include revision-specific citations. Unindexed files are reported separately.', { query: string('One to sixteen search words.', 500), limit: number(10, 1) }, ['query'])],
+  ['execute', schema('run_python', 'Run Python in the isolated runner with a copied snapshot of this conversation workspace. Each run receives a fresh copied snapshot, not a live shared filesystem. Save outputs to relative workspace paths. Matplotlib uses headless Agg: save plots/animations instead of plt.show(). DOCX/PDF and plots can use bundled libraries without installation. Only successful bounded changed outputs are imported. Report testing only from actual execution results, not code inspection. No host access or general network. Saved package restoration needs user package permission.', { code: string('Python source, at most 64 KiB.', 65536) }, ['code'])],
+  ['execute', schema('run_shell', 'Run POSIX shell in the isolated runner with a copied snapshot of this conversation workspace. Node can be invoked here. Each run receives a fresh copied snapshot, not a live shared filesystem. No host access or general network. Only successful bounded changed outputs become new file revisions. Empty changed files does not mean files are absent. Report verification only from actual execution results.', { code: string('Shell source, at most 64 KiB.', 65536) }, ['code'])],
   ['packages', schema('install_packages', 'Replace and verify the conversation package specifications. Supply the entire desired set. Only registry names and optional exact versions are allowed. Dependencies do not become workspace files.', { pip: { type: 'array', maxItems: 32, items: string('PyPI name or name==version.', 200) }, npm: { type: 'array', maxItems: 32, items: string('npm name or @scope/name, optionally followed by @exact.version.', 200) } }, ['pip', 'npm'])]
 ];
 
 /** Assemble protocol fragments only. Nothing runs until finish_reason is tool_calls. */
 export class ToolCallAccumulator {
-  constructor() { this.calls = new Map(); this.argumentBytes = 0; }
+  constructor() { this.calls = new Map(); this.argumentBytes = 0; this.protocolBytes = 0; }
   add(fragments, streaming) {
-    if (!Array.isArray(fragments) || fragments.length > TOOL_LIMITS.calls) throw new Error('The model returned an invalid tool call list.');
+    if (!Array.isArray(fragments)) throw new Error('The model returned an invalid tool call list.');
+    this.protocolBytes += Buffer.byteLength(JSON.stringify(fragments));
+    if (this.protocolBytes > TOOL_LIMITS.transcriptBytes) throw new Error('The model exceeded the tool protocol byte limit.');
     for (const [position, fragment] of fragments.entries()) {
       own(fragment, ['index', 'id', 'type', 'function'], 'tool call fragment');
       const index = fragment.index ?? (streaming ? undefined : position);
-      if (!Number.isSafeInteger(index) || index < 0 || index >= TOOL_LIMITS.calls) throw new Error('The model returned an invalid tool call index.');
+      if (!Number.isSafeInteger(index) || index < 0 || index >= TOOL_LIMITS.transcriptBytes) throw new Error('The model returned an invalid tool call index.');
       let call = this.calls.get(index);
       if (!call) { call = { id: '', type: 'function', function: { name: '', arguments: '' } }; this.calls.set(index, call); }
       if (fragment.type !== undefined && fragment.type !== 'function') throw new Error('Only function tool calls are supported.');
@@ -89,7 +103,7 @@ export class ToolCallAccumulator {
 
 /** Validate stored protocol before resending it. Call only after checking local job ownership. */
 export function toolTranscript(value) {
-  if (!Array.isArray(value) || value.length > TOOL_LIMITS.calls + TOOL_LIMITS.rounds || Buffer.byteLength(JSON.stringify(value)) > TOOL_LIMITS.transcriptBytes) fail(400, 'The saved tool transcript is invalid or too large.');
+  if (!Array.isArray(value) || Buffer.byteLength(JSON.stringify(value)) > TOOL_LIMITS.transcriptBytes) fail(400, 'The saved tool transcript is invalid or too large.');
   const result = [], ids = new Set(); let pending = [];
   for (const row of value) {
     if (row?.role === 'assistant' && !pending.length) {
@@ -97,7 +111,6 @@ export function toolTranscript(value) {
       if (row.content !== null) text(row.content, 'saved tool content', 2 * 1024 * 1024, true);
       const calls = new ToolCallAccumulator(); calls.add(row.tool_calls, false);
       const completed = calls.finish('tool_calls', ids);
-      if (ids.size + completed.length > TOOL_LIMITS.calls) fail(400, 'The saved tool transcript has too many calls.');
       completed.forEach(call => ids.add(call.id)); pending = completed.map(call => call.id);
       result.push({ role: 'assistant', content: row.content, tool_calls: completed });
     } else if (row?.role === 'tool' && pending.length) {
@@ -117,14 +130,22 @@ export class Tools {
   assertIdle(cid) { this.executions?.assertIdle(cid); }
   async prepare(permissions, { signal } = {}) {
     if (permissions.workspace && !this.workspace) fail(503, 'Conversation workspaces are not configured.');
+    let inventory = null;
     if (permissions.execute || permissions.packages) {
       if (!this.executions) fail(503, 'Isolated execution is not configured.');
       const runtime = await this.executions.runtime({ signal });
       if (!runtime.ready) fail(503, runtime.blockedReasons[0]);
+      inventory = runtime.inventory;
       if (permissions.packages && !runtime.packages) fail(503, 'Package installation is not available in the isolated runner.');
     }
     signal?.throwIfAborted();
-    return schemas.filter(([permission]) => permissions[permission]).map(([, definition]) => definition);
+    return schemas.filter(([permission]) => permissions[permission]).map(([, definition]) => {
+      const copy = structuredClone(definition);
+      if (['run_python', 'run_shell', 'install_packages'].includes(copy.function.name)) {
+        copy.function.description += inventory ? ` Verified bundled Python ${inventory.pythonVersion}: ${inventory.python.map(item => `${item.name}==${item.version}`).join(', ')}. Node ${inventory.nodeVersion}. Compatible bundled packages need no install. Additional wheels must fit 32 MiB and 4096 regular files.` : ' Bundled inventory is unavailable. Do not guess package versions. Inspect actual execution results.';
+      }
+      return copy;
+    });
   }
   validate(call, permissions) {
     const name = call.function.name, definition = schemas.find(([, s]) => s.function.name === name);
@@ -175,9 +196,15 @@ export class Tools {
         files = [fileLink(cid, read.file)]; summary = `Read ${args.path}.`; break;
       }
       case 'write_workspace': {
-        const written = await this.workspace.importOutputs(cid, [args], { signal });
-        files = written.files.map(file => fileLink(cid, file));
-        result = { files }; summary = `Saved ${args.path}.`; break;
+        const current = this.workspace.list(cid).files.find(file => file.path === args.path);
+        if ((current?.revision ?? null) !== args.expectedRevision || args.expectedSha256 !== undefined && args.expectedSha256 !== (current?.sha256 ?? null)) fail(409, 'This workspace file changed. Read its current revision and try again.');
+        const unchanged = current && current.text && !current.deleted && current.sha256 === hash(Buffer.from(args.text));
+        const saved = unchanged ? [current] : (await this.workspace.importOutputs(cid, [args], { signal })).files;
+        const availableFiles = saved.map(file => fileLink(cid, file));
+        files = unchanged ? [] : availableFiles;
+        result = { changed: !unchanged, files, availableFiles, totalAvailableFiles: availableFiles.length,
+          fileNote: 'files contains only a new revision from this write. availableFiles includes the saved target revision, even when its bytes were unchanged.' };
+        summary = unchanged ? `Unchanged bytes. ${args.path} remains available at its current revision.` : `Saved a new revision of ${args.path}.`; break;
       }
       case 'search_workspace':
         result = this.workspace.search(cid, args.query, { limit: args.limit ?? 8 });
@@ -185,18 +212,20 @@ export class Tools {
       case 'run_python': case 'run_shell':
         result = await this.executions.execute(cid, { kind: call.function.name === 'run_python' ? 'python' : 'shell', code: args.code, allowPackages: permissions.packages }, { jobId, signal });
         executionId = result.id; files = result.files;
-        result = { ...result, files: files.slice(0, 8), totalFiles: files.length,
-          stdout: clip(result.stdout, 8000), stderr: clip(result.stderr, 8000),
-          outputTruncated: Buffer.byteLength(result.stdout) > 8000 || Buffer.byteLength(result.stderr) > 8000 };
-        summary = result.status === 'complete' ? 'Isolated execution completed.' : `Isolated execution ended with status ${result.status}.`; break;
+        result = executionReceipt(result);
+        summary = result.status === 'complete' ? `Isolated execution completed. ${files.length} created or changed files.` : `Isolated execution ended with status ${result.status}.`; break;
       case 'install_packages':
         result = await this.executions.setPackages(cid, { ...args, allowPackages: permissions.packages }, { jobId, signal });
-        summary = `Saved ${result.pip.length} pip and ${result.npm.length} npm package specifications.`; break;
+        executionId = result.id; files = result.files;
+        summary = result.saved ? `Saved ${result.pip.length} pip and ${result.npm.length} npm package specifications.` : `Packages were not saved. ${result.error ?? result.status}`;
+        result = executionReceipt(result); break;
       default: throw new Error('Unsupported tool.');
     }
     const content = JSON.stringify(result);
     if (Buffer.byteLength(content) > TOOL_LIMITS.resultBytes) throw new Error('The tool result exceeds its context limit. Request a smaller page.');
     return { content, activity: { status: result.status && result.status !== 'complete' ? result.status : 'complete', summary, files,
-      ...(executionId ? { executionId, stdout: clip(result.stdout, 2000), stderr: clip(result.stderr, 2000), exitCode: result.exitCode } : {}) } };
+      ...(typeof result.changed === 'boolean' ? { changed: result.changed } : {}),
+      ...(result.availableFiles ? { availableFiles: result.availableFiles, totalAvailableFiles: result.totalAvailableFiles } : {}),
+      ...(executionId ? { executionId, operationId: result.operationId, stdout: result.stdout, stderr: result.stderr, exitCode: result.exitCode, error: result.error } : {}) } };
   }
 }

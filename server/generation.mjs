@@ -182,7 +182,8 @@ export class Generations {
       this.store.touch(cid);
       this.store.run('INSERT INTO requests(id,conversation_id,fingerprint,response) VALUES(?,?,?,?)', input.requestId, cid, fingerprint, JSON.stringify(response));
     });
-    const state = { controller: new AbortController(), cid, assistantId, reason: null, permissions, deadline };
+    const state = { controller: new AbortController(), cid, assistantId, reason: null, permissions, deadline,
+      budgets: { callLimit: settings.toolCalls ?? null, roundLimit: settings.toolRounds ?? null } };
     this.active.set(jobId, state);
     state.promise = new Promise(resolve => setImmediate(resolve)).then(() => this.run(jobId, state, p, payload));
     this.emit({ type: 'changed', conversationId: cid });
@@ -204,11 +205,19 @@ export class Generations {
     let content = '', reasoning = '', finishReason = null, usage = null, timings = null, promptProgress = null, status = 'complete', failure = null;
     let dirty = false, lastFlush = 0, firstTextMs = null, responseMode = null, totalArguments = 0;
     const transcript = [], activity = [], usedIds = new Set();
+    const budgets = state.budgets ?? { callLimit: null, roundLimit: null };
+    let executedCalls = 0, executedRounds = 0, budgetStop = null, finalOnly = false;
+    const requestFinal = reason => {
+      budgetStop = reason; finalOnly = true;
+      delete payload.tools;
+      payload.messages.push({ role: 'user', content: `${reason} No further tools are available for this turn. Use only the saved tool results to give a final answer. Include actual saved file links and unfinished work. Do not claim that blocked calls ran, replay actions, or invent files.` });
+    };
     // These observations include upstream queue and transport time, unlike model timings.
     const started = performance.now();
     const metadata = () => ({ finishReason, usage, timings, promptProgress,
       observed: { durationMs: performance.now() - started, firstTextMs, responseMode }, error: failure,
-      ...(Object.values(permissions).some(Boolean) ? { toolPermissions: permissions, toolActivity: activity, toolTranscript: transcript } : {}) });
+      ...(Object.values(permissions).some(Boolean) ? { toolPermissions: permissions, toolActivity: activity, toolTranscript: transcript,
+        toolBudget: { callLimit: budgets.callLimit, roundLimit: budgets.roundLimit, executedCalls, executedRounds, stopReason: budgetStop } } : {}) });
     const flush = (force = false) => {
       if (!force && (!dirty || now() - lastFlush < 100)) return;
       this.store.transaction(() => {
@@ -226,7 +235,7 @@ export class Generations {
     }, 100);
     try {
       const signal = AbortSignal.any([controller.signal, state.deadline]);
-      for (let round = 0; round < TOOL_LIMITS.rounds; round++) {
+      for (;;) {
         signal.throwIfAborted();
         let completed = false, roundFinish = null, roundContent = '';
         const calls = new ToolCallAccumulator();
@@ -249,6 +258,7 @@ export class Generations {
           const delta = choice.delta ?? choice.message ?? {};
           if (delta.function_call) throw new Error('Legacy function_call responses are not supported. Use completed tool_calls.');
           if (delta.tool_calls != null && (!Array.isArray(delta.tool_calls) || delta.tool_calls.length)) {
+            if (finalOnly) throw new Error('The model requested tools during the final-answer request. No further calls were executed.');
             if (provider.capabilities.tools !== true || !payload.tools?.length || !this.tools) throw new Error('The model returned tool calls without permission for this request.');
             if (roundFinish) throw new Error('The model sent tool fragments after completing the response.');
             calls.add(delta.tool_calls, responseMode === 'streaming');
@@ -283,26 +293,34 @@ export class Generations {
         if (!completed) { status = 'interrupted'; failure = 'The connection ended without a completion marker. The partial response is saved.'; break; }
         if (!calls.calls.size && roundFinish !== 'tool_calls') break;
         const completedCalls = calls.finish(roundFinish, usedIds);
-        if (round + 1 >= TOOL_LIMITS.rounds || usedIds.size + completedCalls.length > TOOL_LIMITS.calls) throw new Error('The model reached the tool round or call limit. No further calls were executed.');
+        if (finalOnly) throw new Error('The model requested tools during the final-answer request. No further calls were executed.');
         totalArguments += calls.argumentBytes;
         if (totalArguments > TOOL_LIMITS.totalArgumentBytes) throw new Error('The model reached the total tool argument limit.');
-        // Validate the entire round before any of its tools can have side effects.
-        const validated = completedCalls.map(call => this.tools.validate(call, permissions));
+        const remaining = budgets.roundLimit !== null && executedRounds >= budgets.roundLimit ? 0
+          : budgets.callLimit === null ? completedCalls.length : Math.max(0, budgets.callLimit - executedCalls);
+        const allowedCount = Math.min(completedCalls.length, remaining);
+        const blockedReason = allowedCount < completedCalls.length ? 'The optional tool work budget was reached. This call was not executed.' : null;
+        // Validate the whole batch before any side effect. Budget-blocked calls never dispatch.
+        const validated = completedCalls.map(call => this.tools.validate(call, permissions)).slice(0, allowedCount);
         const assistant = { role: 'assistant', content: roundContent || null, tool_calls: completedCalls };
         const results = completedCalls.map(call => ({ role: 'tool', tool_call_id: call.id,
           content: JSON.stringify({ error: 'This call did not finish, or its result was not saved. Inspect current state before retrying.' }) }));
         // Reserve the maximum result size before executing so persistence cannot overflow later.
-        if (Buffer.byteLength(JSON.stringify([...transcript, assistant])) + results.length * (2 * TOOL_LIMITS.resultBytes + 256) > TOOL_LIMITS.transcriptBytes) throw new Error('The tool transcript reached its context limit.');
+        for (let index = allowedCount; index < results.length; index++) results[index].content = JSON.stringify({ status: 'blocked', error: blockedReason });
+        if (Buffer.byteLength(JSON.stringify([...transcript, assistant, ...results])) + allowedCount * (2 * TOOL_LIMITS.resultBytes + 256) > TOOL_LIMITS.transcriptBytes) throw new Error('The tool transcript reached its context limit.');
         transcript.push(assistant, ...results);
         const offset = activity.length;
-        for (const call of completedCalls) {
-          usedIds.add(call.id); activity.push({ id: call.id, name: call.function.name, status: 'pending', summary: 'Waiting for execution.', files: [] });
+        for (const [index, call] of completedCalls.entries()) {
+          usedIds.add(call.id); activity.push({ id: call.id, name: call.function.name,
+            status: index < allowedCount ? 'pending' : 'blocked', summary: index < allowedCount ? 'Waiting for execution.' : blockedReason, files: [] });
         }
         // Pending result placeholders keep crash recovery protocol-valid without replaying anything.
         flush(true);
         for (const [index, validatedCall] of validated.entries()) {
           signal.throwIfAborted();
-          const item = activity[offset + index]; item.status = 'running'; item.summary = 'Tool is running.'; flush(true);
+          const item = activity[offset + index]; item.status = 'running'; item.summary = 'Tool is running.';
+          if (index === 0) executedRounds++;
+          executedCalls++; flush(true);
           try {
             const result = await this.tools.run({ cid, jobId, permissions, signal }, validatedCall);
             results[index].content = result.content; Object.assign(item, result.activity);
@@ -317,6 +335,9 @@ export class Generations {
         }
         signal.throwIfAborted();
         payload.messages.push(assistant, ...results);
+        if (blockedReason || budgets.callLimit !== null && executedCalls >= budgets.callLimit || budgets.roundLimit !== null && executedRounds >= budgets.roundLimit) {
+          requestFinal('The optional tool work budget was reached. Completed work and files are preserved.'); flush(true);
+        }
       }
     } catch (error) {
       if (state.reason === 'cancelled') { status = 'cancelled'; failure = 'Generation stopped by the user.'; }

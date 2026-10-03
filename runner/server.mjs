@@ -6,6 +6,7 @@ import { join, dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { PodmanEngine } from './engine.mjs';
 import { registryAccess } from './registry.mjs';
+import { runnerFailure, packageConsole } from './errors.mjs';
 import { limits, hash, reject, validateOperation, packageSpecs, filePath } from './policy.mjs';
 
 async function readBody(req, maximum) {
@@ -44,7 +45,7 @@ export async function createRunner({ socketPath, stateDir, image = 'localhost/co
     catch (error) { if (error.code !== 'ENOENT') throw error; owner = randomUUID(); await writeFile(ownerPath, owner, { flag: 'wx', mode: 0o600 }); }
     if (!/^[a-f0-9-]{36}$/.test(owner)) throw new Error('Invalid runner owner identity.');
     engine = new PodmanEngine({ owner, image, binary: podman });
-    try { await engine.initialize(); ready = true; } catch (error) { blockedReasons.push(error.message); }
+    try { await engine.initialize(); ready = true; } catch (error) { blockedReasons.push(runnerFailure(error)); }
     // No code or file data is retained in the restart ledger.
     await mkdir(join(stateDir, 'operations'), { mode: 0o700 });
   } catch (error) {
@@ -65,7 +66,7 @@ export async function createRunner({ socketPath, stateDir, image = 'localhost/co
   }
   function snapshot(job) {
     const terminal = !['preparing', 'running'].includes(job.status);
-    return { id: job.id, status: job.status, ...(terminal ? job.result ?? {} : {}), files: terminal ? job.output?.map(({ bytes, ...file }) => file) ?? [] : [] };
+    return { id: job.id, operationId: job.id, status: job.status, ...(terminal ? job.result ?? {} : {}), files: terminal ? job.output?.map(({ bytes, ...file }) => file) ?? [] : [] };
   }
   async function cancel(job) {
     if (['complete','error','timed_out','cancelled','interrupted'].includes(job.status)) return;
@@ -90,6 +91,7 @@ export async function createRunner({ socketPath, stateDir, image = 'localhost/co
         job.worker = await engine.start({ operationId: `${job.id}-fetch`, registry: job.mirror });
         check(job);
         job.install = await job.worker.call({ op: 'install', packages: job.request.packages }, limits.packageSeconds * 1000);
+        job.install.stdout = packageConsole(job.install.stdout); job.install.stderr = packageConsole(job.install.stderr);
         await job.worker.sealRegistry(); job.mirror = null;
         await job.worker.call({ op: 'seal' }); check(job);
         const manifest = await job.worker.call({ op: 'dependencyManifest' });
@@ -132,7 +134,7 @@ export async function createRunner({ socketPath, stateDir, image = 'localhost/co
       }
       job.inputs = [];
       let result;
-      if (job.request.kind === 'install') result = { ...job.install, status: 'complete', stdout: '', stderr: '', exitCode: 0, files: [] };
+      if (job.request.kind === 'install') result = { ...job.install, status: 'complete', stdout: job.install.stdout ?? '', stderr: job.install.stderr ?? '', exitCode: 0, files: [] };
       else if (['document', 'probe'].includes(job.request.kind)) {
         const file = job.request.files[0];
         const data = await job.worker.call({ op: job.request.kind, path: file.path, mime: file.mime }, 30000);
@@ -164,7 +166,10 @@ export async function createRunner({ socketPath, stateDir, image = 'localhost/co
     } catch (error) {
       job.terminalStatus = job.cancelled || closing ? 'cancelled' : /timed out/i.test(error.message) ? 'timed_out' : 'error';
       job.output = [];
-      job.result = { status: job.terminalStatus, stdout: '', stderr: '', exitCode: null, error: String(error.message).slice(0, 2500) };
+      job.result = { status: job.terminalStatus,
+        stdout: packageConsole(error.diagnostics?.stdout ?? job.install?.stdout),
+        stderr: packageConsole(error.diagnostics?.stderr ?? job.install?.stderr),
+        exitCode: error.diagnostics?.exitCode ?? null, error: runnerFailure(error) };
     } finally {
       try { await job.mirror?.close(); job.mirror = null; await job.worker?.stop(); }
       catch { ready = false; blockedReasons.push('Container cleanup failed. Operator inspection is required.'); job.terminalStatus = 'error'; job.result = { status: 'error', stdout: '', stderr: '', exitCode: null, error: 'Container cleanup could not be confirmed.' }; job.output = []; }
@@ -180,7 +185,7 @@ export async function createRunner({ socketPath, stateDir, image = 'localhost/co
     try {
       const path = new URL(req.url, 'http://runner').pathname;
       if (path === '/v1/capabilities' && req.method === 'GET') {
-        send(res, { enabled: true, ready, packages: ready, execution: ready, installs: ready, limits, blockedReasons }); return;
+        send(res, { enabled: true, ready, packages: ready, execution: ready, installs: ready, limits, blockedReasons, inventory: ready ? engine.inventory : null }); return;
       }
       if (closing) reject('Runner is stopping.', 503);
       if (path === '/v1/operations' && req.method === 'POST') {
@@ -224,7 +229,7 @@ export async function createRunner({ socketPath, stateDir, image = 'localhost/co
         operations.delete(job.id); await unlink(join(stateDir, 'operations', `${job.id}.json`)); send(res, { released: true }); return;
       }
       reject('Runner route not found.', 404);
-    } catch (error) { send(res, { error: String(error.message).slice(0, 2500) }, error.status ?? (error instanceof SyntaxError ? 400 : 500)); }
+    } catch (error) { send(res, { error: error.status && error.status < 500 ? String(error.message).slice(0, 2500) : runnerFailure(error) }, error.status ?? (error instanceof SyntaxError ? 400 : 500)); }
   });
   server.maxHeadersCount = 30; server.headersTimeout = 10000; server.requestTimeout = 30000;
   const expiry = setInterval(() => {

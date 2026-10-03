@@ -41,13 +41,15 @@ Use the dedicated rootless runner account and a source tree without secrets. The
 ```sh
 podman build --cpu-quota 200000 --cpu-period 100000 \
   --memory 2g --memory-swap 2g --ulimit nproc=256:256 \
-  -t localhost/common-chat-worker:1 -f runner/Dockerfile runner
-podman image inspect localhost/common-chat-worker:1 --format '{{.Id}}'
+  -t localhost/common-chat-worker:build-candidate -f runner/Dockerfile runner
+podman image inspect localhost/common-chat-worker:build-candidate --format '{{.Id}}'
 ```
 
-The Dockerfile pins both base image digests, Node 22.16.0, and ffmpeg/ffprobe package `7:5.1.9-0+deb12u1`. The Python base resolves to 3.12.15. `runner/requirements.txt` pins the complete installed Python dependency set, including Matplotlib 3.10.1, NumPy 2.2.4, python-docx 1.1.2, pypdf 5.4.0, and ReportLab 4.3.1. `/opt/runner/python-versions.txt` and `debian-versions.txt` record installed components in the image. Debian transitive dependencies still come from the configured Debian repository; this is not a claim of bit-for-bit reproducible builds. Save the accepted image ID/archive for rollback. Review package/security updates deliberately rather than using a floating runtime image.
+Use a new candidate tag for each update. Do not replace an active tag or image selection before verification. First check that live jobs, executions, and package operations are idle and the host has enough CPU, memory, and disk headroom. Build only in the dedicated rootless account, not the rootful container store. When using `sudo -u`, first change to an accessible directory and set that account's `HOME`, `XDG_RUNTIME_DIR`, and user-bus address.
 
-The broker resolves the configured image once at startup and runs that exact local image ID with `--pull never`. It never downloads an image in response to a code request. Its readiness response explains a missing image or missing rootless prerequisite.
+The Dockerfile pins both base image digests, Node 22.16.0, and ffmpeg/ffprobe package `7:5.1.9-0+deb12u1`. The Python base resolves to 3.12.15. `runner/requirements.txt` pins the complete installed Python dependency set, including Matplotlib 3.10.1, NumPy 2.2.4, pandas 2.2.3, seaborn 0.13.2, python-docx 1.1.2, pypdf 5.4.0, and ReportLab 4.3.1. `/opt/runner/python-versions.txt` and `debian-versions.txt` record installed components in the image. Debian transitive dependencies still come from the configured Debian repository; this is not a claim of bit-for-bit reproducible builds. Save the accepted image ID/archive for rollback. Review package/security updates deliberately rather than using a floating runtime image.
+
+The broker resolves the configured image once at startup and runs that exact local image ID with `--pull never`. It starts an isolation-checked worker to read the actual Python distribution inventory and Python/Node versions. The capabilities response reports that inventory with its image ID. It does not infer installed libraries from the source requirements file. The broker never downloads an image in response to a code request. Its readiness response explains a missing image or missing rootless prerequisite.
 
 ## Install and connect the broker
 
@@ -70,6 +72,8 @@ Package arrays contain strings. Python accepts a registry name or `name==exact-v
 
 A separate clean fetch container receives no conversation code or files. Its in-container loopback HTTP bridge sends bounded registry requests through the existing stdin/stdout protocol. No host socket is mounted and SELinux labeling stays enabled. The broker's fixed **registry mirror** allows GET/HEAD routes for `pypi.org`, `files.pythonhosted.org`, and `registry.npmjs.org`. It rewrites package-download URLs, validates public IPv4/IPv6 DNS answers and each redirect, then connects to a validated IP with normal hostname/TLS certificate checks. It does not implement CONNECT, arbitrary upstream URLs, private/LAN egress, or general web access. There is no routable worker network. Registry bodies cross the pipe in 192 KiB chunks, with fixed per-response/aggregate byte and request budgets. The pipe is transport, not authority to choose a destination.
 
+Python resolves against the image's actual installed distributions before installation. Compatible bundled libraries stay in the image and are not copied into `/deps/python`. The resolver pins bundled versions as constraints. An explicit top-level exact version can replace its own bundled pin, but other bundled constraints still apply. Only missing or explicitly changed resolved wheels enter `/deps/python`, without a source build or a second dependency resolution. The additional-file budget applies to those wheels, not the reused image libraries. Requesting `numpy`, `matplotlib`, `pandas`, and `seaborn` therefore reuses compatible bundled versions.
+
 Python installs wheels only. npm lifecycle scripts are disabled. A source build, postinstall-dependent package, private registry, external tarball, dependency containing symlinks/hard links, or large dependency closure can fail. Additional dependencies have a separate strict regular-file transfer budget: 32 MiB total, 16 MiB per file, 4096 files. npm binary symlinks are not exported, so packages requiring them are unsupported. The image already contains the larger plotting/document toolchain. Errors remain visible; the broker never broadens networking. npm packages are available to CommonJS through `NODE_PATH`. Bare ESM imports from arbitrary workspace locations do not use Node's `NODE_PATH`; use an explicit package path or CommonJS. No dependency-directory caching is implemented.
 
 After installation, the broker revokes registry requests and closes every upstream connection. It collects only bounded regular dependency files and destroys the fetch container. It then creates a fresh, fully confined offline worker with no registry handler or socket. Dependencies enter that worker before conversation files. The execution worker cannot request registry access through the pipe. An install-only request returns pinned top-level specifications and a summary, not dependency directories. The application stores those specifications and passes them on each execute. Transitive dependency resolution is not a full application lockfile and may change between operations unless independently pinned.
@@ -81,22 +85,26 @@ After installation, the broker revokes registry requests and closes every upstre
 ```js
 const runner = new RunnerClient({ socketPath });
 await runner.capabilities();
-// {enabled, ready, packages, execution, installs, limits, blockedReasons}
+// {enabled, ready, packages, execution, installs, limits, blockedReasons,
+//  inventory:{imageId,pythonVersion,nodeVersion,python:[{name,version}]}}
 await runner.execute({
   workspaceId, kind: 'python', code, // kind can also be 'shell'
   files: [{ path, mime, bytes: Buffer.from('input') }],
   packages: { pip: [], npm: [] }, signal
 });
-// {status, stdout, stderr, exitCode, error, files:[{path,mime,bytes:Buffer}]}
+// {operationId, status, stdout, stderr, exitCode, error, files:[{path,mime,bytes:Buffer}]}
 await runner.install({ workspaceId, packages: { pip: ['humanize'], npm: [] }, signal });
-// {packages:{pip:['humanize==resolved-version'],npm:[]},summary}
+// {operationId,status,stdout,stderr,exitCode,error,summary,
+//  packages:{pip:['humanize==resolved-version'],npm:[]}} // packages only on success
 await runner.extractDocument({ path, mime, bytes, signal });
 // {passages:[{text,page?,paragraph?}]}
 await runner.mediaProbe({ name, mime, bytes, signal });
 // {durationSeconds,hasAudio,hasVideo,width?,height?,audioCodec?,videoCodec?}
 ```
 
-Unconfigured/unavailable capabilities return `ready:false` with reasons. Execution terminal states are complete, error, cancelled, timed_out, and interrupted. Transport errors and AbortSignal cancellation reject. Install, extraction, and probe reject on a failed operation. Callers must not blindly retry code after a transport failure. The client sends an explicit cancellation without using the already-aborted signal, then releases terminal results.
+Unconfigured/unavailable capabilities return `ready:false` with reasons. Execution terminal states are complete, error, cancelled, timed_out, and interrupted. Transport errors and AbortSignal cancellation reject, with an operation ID when preparation started. Install returns terminal failures with the operation ID and bounded, sanitized package-manager console. Extraction and probe reject on a failed operation. Callers must not blindly retry code after a transport failure. The client sends an explicit cancellation without using the already-aborted signal, then releases terminal results.
+
+Application package requests return the execution `id`, runner `operationId`, terminal status, console, and `saved`. Failed or cancelled installs keep the prior saved `pip`/`npm` list. Use both IDs to investigate a failure before retrying. Package diagnostics remove credentials, registry URLs, absolute paths, and terminal control codes. Engine errors return fixed public guidance, not host logs or stacks. Ordinary code stdout/stderr remain bounded user output.
 
 The private protocol has prepare, bounded raw-byte input upload, start, status, bounded output download, cancel and release routes under `/v1/operations`. It sends small internal chunks to the worker rather than one base64 workspace JSON object. Operation IDs are idempotent only while their bounded records remain retained; differing content with the same ID is a conflict. No caller can select engine flags, mounts, images, entrypoints, host paths, or environment.
 

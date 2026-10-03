@@ -158,6 +158,14 @@ All paths below have prefix `/api/conversations/:cid/workspace`.
 
 Use URLSearchParams for logical paths. Unknown or duplicate query parameters are rejected. Mutation routes require the application's same-origin JSON headers. Downloads always use attachment disposition, `application/octet-stream`, `nosniff`, and a restrictive sandbox policy. Uploaded HTML, SVG, JavaScript, and other active formats never receive an inline execution response from these routes.
 
+## Browser file results
+
+Tool receipts show revision-specific file cards outside collapsed activity. A card can represent a changed output or a file that remains available. It is not proof that the model tested the file. Download always retrieves the recorded revision. Preview supports bounded text/code, PNG/JPEG/WebP/GIF, extracted PDF/DOCX text, and native WAV/MP3/FLAC or MP4/WebM controls. Media codec support depends on the browser. Close the panel to stop media playback.
+
+Markdown activates only an exact same-conversation `/api/conversations/:cid/workspace/download` link with one valid path and one revision UUID. Other relative navigation, cross-conversation links, raw HTML, and Markdown images remain inactive. Workspace previews do not execute scripts.
+
+Completed Python fences have an explicit "Run in isolated Python" control. The control opens the Run code editor for review. It does not execute code or grant package access. Press the separate Run button to submit the reviewed source. Earlier messages and new incoming fences never run automatically.
+
 ## Limits
 
 | Resource | Limit |

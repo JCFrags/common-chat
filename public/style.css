@@ -258,6 +258,11 @@ dialog legend { padding: 0 6px; font-size: 12px; }
 .tool-controls .checks { grid-template-columns: 1fr; gap: 8px; }
 .tool-controls p { margin: 8px 0; }
 .tool-activity { margin: 10px 0; padding: 8px; border: 1px solid var(--border); border-radius: 8px; }
+.generated-files { margin: 14px 0; }
+.generated-files h3 { font-size: 14px; margin: 0 0 8px; }
+.generated-file-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); gap: 8px; }
+.generated-file { display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 12px; border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.generated-file .file-links { margin: auto 0 0; padding-top: 4px; }
 .tool-activity summary { cursor: pointer; font-size: 12px; }
 .tool-activity pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow: auto; font-size: 12px; }
 #media-input-hint { font-size: 10px; margin-top: 6px; color: var(--muted-foreground); }

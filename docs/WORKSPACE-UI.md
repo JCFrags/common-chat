@@ -39,7 +39,7 @@ workspace.close();
 
 `getConversation()` returns the current snapshot or `null`. `ensureConversation()` returns the current or newly created snapshot asynchronously. The latter must update the value that `getConversation()` returns. `onChanged({conversationId, type, path?})` runs after confirmed mutations. It is not an authorization request. Execution start, completion, and package changes use type `execution`.
 
-The installer adds `#workspace-button` to `#topbar .toolbar`. Its return value is `{refresh, close}`. It rejects duplicate installation. It does not install global artifact previews or start a model.
+The installer adds `#workspace-button` to `#topbar .toolbar`. Its return value is `{refresh, close, openFile, openExecution, openCode}`. `openFile(path, revision)` shows a saved revision. `openExecution(id)` shows its console and results. `openCode(source)` opens Python source for review and asks before replacing another code draft. It never starts execution or changes package consent. The installer rejects duplicate installation. It does not install global artifact previews or start a model.
 
 ## File behavior
 
@@ -55,7 +55,7 @@ The installer adds `#workspace-button` to `#topbar .toolbar`. Its return value i
 
 Markdown passes through the existing `markdown()` renderer. Raw HTML stays escaped. HTML, SVG, JavaScript, and other source formats are text, not executable documents. Workspace previews do not start artifact frames, scripts, or Mermaid rendering. Code-copy controls remain available.
 
-PNG, JPEG, WebP, and GIF previews use only bounded base64 bytes returned for the selected revision. The component does not load a file-supplied image URL. Other binary types require download.
+PNG, JPEG, WebP, and GIF previews use only bounded base64 bytes returned for the selected revision. WAV, MP3, FLAC, MP4, and WebM use native media controls from bounded local blob bytes. Browser codec support can vary. Closing the dialog stops media playback and releases blob URLs. The component does not load a file-supplied image or media URL. Other binary types require download.
 
 PDF and DOCX previews show extracted passages and their source locations. The interface states that layout, images, and some content can be missing. It does not claim full document fidelity or OCR support. Extraction failures remain visible, and the original revision can still be downloaded.
 
@@ -71,7 +71,7 @@ Package validation can take up to 300 seconds. Its pending state does not lock t
 
 The component polls the selected active job once per second while the dialog is open. Closing the dialog or switching conversations stops that polling. It does not cancel the server job. Reopening the conversation resumes status reads. Recent runs can recover a job after a page reload or an uncertain start response. Code is never retried automatically. After an uncertain start, a new submission requires selection of the existing job or explicit confirmation after checking recent runs.
 
-The console uses text nodes, not HTML, and displays at most 64 Ki characters. The runner also applies output limits. It lists at most 32 created or changed files. A polling error keeps the last known status and offers recovery through Recent runs. Stop requests cancellation and then reads the job state. An unconfirmed cancellation is not reported as stopped.
+The console uses text nodes, not HTML, and shows 64 Ki characters per page. Previous and Next controls reach all saved output. Download full console saves that output as text. The runner still applies output limits. The dialog lists at most 32 created or changed files and separately reports the number of current available files. Execution and runner operation IDs remain visible. A failed package validation keeps the prior saved list and shows its sanitized console. A polling error keeps the last known status and offers recovery through Recent runs. Stop requests cancellation and then reads the job state. An unconfirmed cancellation is not reported as stopped.
 
 ## API shapes
 
@@ -92,13 +92,13 @@ File metadata has `path`, opaque UUID `revision`, numeric `version`, `mime`, `si
 
 Execution routes:
 
-- `GET /api/runtime` returns `{enabled, ready, packages, limits, blockedReasons}`.
+- `GET /api/runtime` returns `{enabled, ready, packages, limits, inventory, blockedReasons}`. Verified image inventory can be `null`.
 - `POST /api/conversations/:cid/executions` accepts `{kind, code, allowPackages}` and returns `{id, status}`.
 - `GET /api/conversations/:cid/executions` returns `{executions}` with at most 20 recent entries.
-- `GET /api/conversations/:cid/executions/:id` returns `{id, status, stdout, stderr, exitCode, files, error}`.
+- `GET /api/conversations/:cid/executions/:id` returns `{id, operationId, status, stdout, stderr, exitCode, files, availableFiles, fileNote, error}`.
 - `POST /api/conversations/:cid/executions/:id/cancel` requests cancellation.
 - `GET /api/conversations/:cid/packages` returns `{pip, npm}`.
-- `POST /api/conversations/:cid/packages` accepts `{pip, npm, allowPackages: true}`.
+- `POST /api/conversations/:cid/packages` accepts `{pip, npm, allowPackages: true}` and returns the saved specifications, execution result, both IDs, and `saved`. Terminal failures return `saved: false` without replacing the prior list.
 
 Terminal job statuses are `complete`, `error`, `cancelled`, `timed_out`, and `interrupted`. An unknown status does not enable another run.
 

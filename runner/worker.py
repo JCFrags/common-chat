@@ -1,6 +1,7 @@
 """Bounded worker protocol. This program is never run on the application host."""
 import base64
 import hashlib
+import importlib.metadata
 import json
 import math
 import mimetypes
@@ -217,6 +218,12 @@ class Relay(http.server.BaseHTTPRequestHandler):
             self.server.connections.discard(self.connection)
 
 
+class PackageFailure(ValueError):
+    def __init__(self, manager, result):
+        super().__init__(manager + ' could not install approved registry packages. ' + (result['error'] or ''))
+        self.diagnostics = {key: result[key] for key in ('stdout', 'stderr', 'exitCode')}
+
+
 def install(packages):
     global bridge
     if sealed or list(ROOT.iterdir()):
@@ -225,31 +232,58 @@ def install(packages):
         raise ValueError('Package phase already ran.')
     bridge = Bridge()
     resolved = {'pip': [], 'npm': []}
+    reused, additional = [], []
+    installed = {re.sub(r'[-_.]+', '-', item.metadata['Name']).lower(): {'name': item.metadata['Name'], 'version': item.version}
+                 for item in importlib.metadata.distributions()}
+    console = {'stdout': '', 'stderr': ''}
     deadline = time.monotonic() + 235
     if packages.get('pip'):
-        result = command(['python', '-I', '-m', 'pip', 'install', '--only-binary=:all:', '--no-cache-dir',
-                          '--disable-pip-version-check', '--no-input', '--index-url', 'http://127.0.0.1:43123/pypi/simple/',
-                          '--trusted-host', '127.0.0.1', '--target', '/deps/python', '--report', '/scratch/pip-report.json',
-                          *packages['pip']], max(1, deadline - time.monotonic()), '/scratch')
+        # Resolve against the real image inventory before copying any missing wheels.
+        # Keep compatible bundled dependencies pinned. An explicit top-level exact version can override its own pin.
+        overrides = {re.sub(r'[-_.]+', '-', spec.split('==')[0]).lower() for spec in packages['pip'] if '==' in spec}
+        Path('/scratch/bundled-constraints.txt').write_text('\n'.join(info['name'] + '==' + info['version']
+            for name, info in installed.items() if name not in overrides) + '\n')
+        pip_args = ['python', '-I', '-m', 'pip', 'install', '--only-binary=:all:', '--no-cache-dir', '--no-compile',
+                    '--disable-pip-version-check', '--no-input', '--index-url', 'http://127.0.0.1:43123/pypi/simple/',
+                    '--trusted-host', '127.0.0.1']
+        result = command([*pip_args, '--dry-run', '--constraint', '/scratch/bundled-constraints.txt',
+                          '--report', '/scratch/pip-report.json', *packages['pip']], max(1, deadline - time.monotonic()), '/scratch')
         if result['status'] != 'complete':
-            raise ValueError('pip could not install registry wheels: ' + result['stderr'][-2000:] + (result['error'] or ''))
+            raise PackageFailure('pip', result)
         report = json.loads(Path('/scratch/pip-report.json').read_text())
-        by_name = {re.sub(r'[-_.]+', '-', item['metadata']['name']).lower(): item['metadata'] for item in report['install']}
+        by_name = {**installed, **{re.sub(r'[-_.]+', '-', item['metadata']['name']).lower(): item['metadata'] for item in report['install']}}
+        additional = [item['metadata']['name'] + '==' + item['metadata']['version'] for item in report['install']]
+        if any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]*==[0-9][A-Za-z0-9.!+_-]*', spec) for spec in additional):
+            raise ValueError('pip returned an unsupported resolved package specification.')
+        if additional:
+            result = command([*pip_args, '--no-deps', '--target', '/deps/python', *additional],
+                             max(1, deadline - time.monotonic()), '/scratch')
+            if result['status'] != 'complete':
+                raise PackageFailure('pip', result)
+        console['stdout'] += result['stdout'][-8000:]
+        console['stderr'] += result['stderr'][-8000:]
         for spec in packages['pip']:
             name = re.sub(r'[-_.]+', '-', spec.split('==')[0]).lower()
             info = by_name.get(name)
             if not info:
                 raise ValueError('pip did not return a resolved version.')
-            resolved['pip'].append(info['name'] + '==' + info['version'])
+            pinned = info['name'] + '==' + info['version']
+            resolved['pip'].append(pinned)
+            if name in installed and installed[name]['version'] == info['version']:
+                reused.append(pinned)
+        if reused:
+            console['stdout'] = 'Reused bundled Python: ' + ', '.join(reused) + '\n' + console['stdout']
     if packages.get('npm'):
         result = command(['npm', 'install', '--prefix', '/deps/node', '--ignore-scripts', '--no-audit', '--no-fund',
                           '--save-exact', '--registry', 'http://127.0.0.1:43123/npm/', '--cache', '/scratch/npm-cache',
                           *packages['npm']], max(1, deadline - time.monotonic()), '/scratch')
         if result['status'] != 'complete':
-            raise ValueError('npm could not install registry packages without scripts: ' + result['stderr'][-2000:] + (result['error'] or ''))
+            raise PackageFailure('npm', result)
+        console['stdout'] += result['stdout'][-8000:]
+        console['stderr'] += result['stderr'][-8000:]
         data = json.loads(Path('/deps/node/package.json').read_text())
         resolved['npm'] = [name + '@' + version for name, version in data.get('dependencies', {}).items()]
-    return {'packages': resolved, 'summary': 'Installed registry wheels and/or npm packages without lifecycle scripts in clean isolated scratch.'}
+    return {'packages': resolved, **console, 'summary': f'Reused {len(reused)} requested bundled Python libraries. Installed {len(additional)} additional wheels and {len(resolved["npm"])} requested npm packages without lifecycle scripts in clean isolated scratch.'}
 
 
 def files(root=ROOT, count_limit=128):
@@ -271,7 +305,7 @@ def files(root=ROOT, count_limit=128):
                     raise ValueError('Output contains a link, special file, or oversized file.')
                 total += info.st_size
                 if total > TOTAL_LIMIT or len(result) >= count_limit:
-                    raise ValueError('Output file budget exceeded.')
+                    raise ValueError('Additional dependencies exceed the 32 MiB or 4096-file transfer budget.' if root == Path('/deps') else 'Output file budget exceeded.')
                 digest = hashlib.sha256()
                 while data := os.read(fd, CHUNK):
                     digest.update(data)
@@ -353,6 +387,9 @@ def handle(message):
                 'seccomp': 'Seccomp:\t2' in status, 'capabilities': next(line for line in status.splitlines() if line.startswith('CapEff:')).split()[1],
                 'memory': Path('/sys/fs/cgroup/memory.max').read_text().strip(),
                 'swap': Path('/sys/fs/cgroup/memory.swap.max').read_text().strip(),
+                'inventory': {'pythonVersion': sys.version.split()[0],
+                    'nodeVersion': subprocess.check_output(['node', '--version'], env=child_env(), timeout=3, text=True).strip(),
+                    'python': sorted([{'name': item.metadata['Name'], 'version': item.version} for item in importlib.metadata.distributions()], key=lambda item: item['name'].lower())},
                 'pids': Path('/sys/fs/cgroup/pids.max').read_text().strip(), 'cpu': Path('/sys/fs/cgroup/cpu.max').read_text().strip()}
     if op == 'install':
         return install(message['packages'])
@@ -427,4 +464,7 @@ while (request := requests.get()) is not None:
         result = {'id': request['id'], 'ok': True, 'value': handle(request)}
     except Exception as error:
         result = {'id': request.get('id'), 'ok': False, 'error': str(error)[:2500]}
+        if isinstance(error, PackageFailure):
+            result['diagnostics'] = {**error.diagnostics, 'stdout': error.diagnostics['stdout'][-8000:],
+                                     'stderr': error.diagnostics['stderr'][-8000:]}
     emit(result)

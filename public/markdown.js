@@ -4,7 +4,24 @@ import { normalizeDiagram, DIAGRAM_LIMITS } from './diagram-source.js';
 export const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
 export const RENDER_LIMITS = Object.freeze({ message: 128 * 1024, code: 16 * 1024, math: 4096, mathCount: 100, mathTotal: 32 * 1024, ...DIAGRAM_LIMITS, diagrams: 4 });
 const md = new MarkdownIt({ html: false, breaks: true, linkify: false, typographer: false, maxNesting: 32 });
+const revisionId = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+/** Accept only an exact conversation-scoped revision download. Never accept arbitrary relative navigation. */
+export function workspaceDownload(value, conversationId) {
+  if (typeof value !== 'string' || value.length > 2000 || !value.startsWith('/') || value.startsWith('//') || /[\\\p{C}]/u.test(value) || !revisionId.test(conversationId ?? '')) return null;
+  try {
+    const url = new URL(value, 'http://workspace.invalid'), expected = `/api/conversations/${encodeURIComponent(conversationId)}/workspace/download`;
+    if (url.pathname !== expected || value.split('?')[0] !== expected || url.hash || url.searchParams.size !== 2 ||
+        url.searchParams.getAll('path').length !== 1 || url.searchParams.getAll('revision').length !== 1 ||
+        !revisionId.test(url.searchParams.get('revision') ?? '')) return null;
+    const path = url.searchParams.get('path');
+    if (!path || !path.isWellFormed() || path !== path.normalize('NFC') || new TextEncoder().encode(path).length > 512 || /[\\<>:"|?*\p{C}]/u.test(path) || path.startsWith('~')) return null;
+    const parts = path.split('/');
+    if (parts.length > 8 || parts.some(part => !part || ['.', '..'].includes(part) || part !== part.trim() || part.endsWith('.') || new TextEncoder().encode(part).length > 120 || /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) return null;
+    return { url: expected + '?' + url.searchParams, path, revision: url.searchParams.get('revision') };
+  } catch { return null; }
+}
 md.validateLink = value => {
+  if (value.startsWith('/')) return !!workspaceDownload(value, /^\/api\/conversations\/([^/]+)\//.exec(value)?.[1]);
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password; }
   catch { return false; }
 };
@@ -12,7 +29,12 @@ md.validateLink = value => {
 md.renderer.rules.image = (tokens, i) => escape(`![${tokens[i].content}](${tokens[i].attrGet('src')})`);
 const linkOpen = md.renderer.rules.link_open;
 md.renderer.rules.link_open = (tokens, i, options, env, renderer) => {
-  tokens[i].attrSet('target', '_blank'); tokens[i].attrSet('rel', 'noopener noreferrer');
+  const href = tokens[i].attrGet('href') ?? '';
+  if (href.startsWith('/')) {
+    const file = workspaceDownload(href, env.conversationId);
+    if (file) { tokens[i].attrSet('href', file.url); tokens[i].attrSet('download', ''); }
+    else tokens[i].attrs = (tokens[i].attrs ?? []).filter(([name]) => name !== 'href');
+  } else { tokens[i].attrSet('target', '_blank'); tokens[i].attrSet('rel', 'noopener noreferrer'); }
   return linkOpen ? linkOpen(tokens, i, options, env, renderer) : renderer.renderToken(tokens, i, options);
 };
 md.renderer.rules.table_open = () => '<div class="table-scroll"><table>\n';
@@ -104,7 +126,8 @@ md.renderer.rules.fence = (tokens, i, options, env) => {
   const token = tokens[i], source = token.content.replace(/\n$/, ''), { name, intent, view } = fencePresentation(token.info, source);
   const last = token.map ? env.lines[token.map[1] - 1] ?? '' : '';
   const closed = new RegExp(`^\\s*${token.markup[0]}{${token.markup.length},}\\s*$`).test(last);
-  const copy = '<button type="button" data-code-copy>Copy code</button>';
+  const copy = '<button type="button" data-code-copy>Copy code</button>' + (closed && !env.streaming && ['python', 'py'].includes(name)
+    ? '<button type="button" data-python-run>Run in isolated Python</button>' : '');
   const plain = `<pre><code>${escape(source)}</code></pre>`;
   const complete = closed && !env.streaming;
   const attributes = `data-code-language="${escape(name)}" data-code-complete="${complete}" data-code-view="${view}" data-code-intent="${intent}"`;
@@ -124,13 +147,13 @@ md.renderer.rules.fence = (tokens, i, options, env) => {
 };
 
 const cache = new Map(); let cacheBytes = 0;
-export function markdown(input, { streaming = false } = {}) {
+export function markdown(input, { streaming = false, conversationId = null } = {}) {
   const source = String(input ?? '').replace(/\r\n?/g, '\n');
   if (source.length > RENDER_LIMITS.message) return `<p class="render-note">Rich rendering size limit exceeded. Source is shown.</p><pre><code>${escape(source)}</code></pre>`;
-  const key = `${streaming ? 's' : 'c'}${source}`;
+  const key = `${streaming ? 's' : 'c'}:${conversationId ?? ''}:${source}`;
   if (cache.has(key)) return cache.get(key);
   let result;
-  try { result = md.render(source, { streaming, lines: source.split('\n'), mathCount: 0, mathTotal: 0, diagrams: 0 }); }
+  try { result = md.render(source, { streaming, conversationId, lines: source.split('\n'), mathCount: 0, mathTotal: 0, diagrams: 0 }); }
   catch { result = `<p class="render-note">Rich rendering failed. Source is shown.</p><pre><code>${escape(source)}</code></pre>`; }
   // The parser never enables raw HTML. Sanitize generated HTML and MathML in the
   // browser as a second boundary. Node unit tests use the same parser without a DOM.

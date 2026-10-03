@@ -89,7 +89,15 @@ export class Store {
   message(row) {
     return { id: row.id, conversationId: row.conversation_id, parentId: row.parent_id, role: row.role,
       content: row.content, reasoning: row.reasoning, status: row.status, providerId: row.provider_id,
-      providerName: row.provider_name, model: row.model, settings: parse(row.settings), metadata: (() => { const { source, toolTranscript, toolPermissions, archivedToolContext, ...visible } = parse(row.metadata); return visible; })(),
+      providerName: row.provider_name, model: row.model, settings: parse(row.settings), metadata: (() => {
+        const { source, toolTranscript, toolPermissions, archivedToolContext, ...visible } = parse(row.metadata);
+        // Local saved grants are read-only history. Imported grants stay archived and hidden.
+        if (row.role === 'assistant' && !archivedToolContext && toolPermissions && typeof toolPermissions === 'object' && !Array.isArray(toolPermissions) &&
+            this.get('SELECT id FROM jobs WHERE message_id=? AND conversation_id=?', row.id, row.conversation_id)) {
+          visible.toolPermissions = Object.fromEntries(['workspace', 'execute', 'packages'].map(key => [key, toolPermissions[key] === true]));
+        }
+        return visible;
+      })(),
       createdAt: row.created_at, updatedAt: row.updated_at,
       attachments: this.all('SELECT id,name,mime,kind,size,sha256 FROM attachments WHERE message_id=? ORDER BY created_at,id', row.id) };
   }

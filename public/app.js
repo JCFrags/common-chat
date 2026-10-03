@@ -4,7 +4,7 @@ import { installSidebarGestures } from './touch.js';
 import { installPreviews, cancelPreviews } from './previews.js';
 import { installWorkspace } from './workspace.js';
 import { installMediaControls, writeMediaCapabilities, readMediaCapabilities, updateMediaHints, validateUpload, attachmentHtml } from './media.js';
-import { installToolControls, toolActivityHtml } from './tool-controls.js';
+import { installToolControls, toolActivityHtml, generatedFilesHtml } from './tool-controls.js';
 import { createDraftStore, DRAFT_LOGOUT_KEY } from './drafts.js';
 const $ = selector => document.querySelector(selector);
 const icons = {
@@ -25,7 +25,7 @@ function fillIcons(root = document) { root.querySelectorAll('[data-icon]').forEa
 fillIcons();
 let draftWarning = '';
 const drafts = createDraftStore({ onWarning: message => { draftWarning = message; renderDraftStatus(); } });
-const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, draftKey: undefined, loading: false, missing: false, openReasoning: new Set(), openStats: new Set(), authenticated: false };
+const state = { conversation: null, providers: [], preferences: {}, list: [], busy: false, attachments: [], editing: null, retry: null, draftKey: undefined, loading: false, missing: false, openReasoning: new Set(), openStats: new Set(), openTools: new Set(), authenticated: false };
 let events, toastTimer, searchTimer, listTimer, pendingCheck = false, workspaceUI, toolControls;
 const selectedProvider = () => state.providers.find(p => p.id === $('#provider-select').value);
 const routeId = () => location.hash.slice(1) || null;
@@ -179,15 +179,15 @@ function messageHtml(m, c) {
   const index = siblings.findIndex(x => x.id === m.id), active = !!c.activeJob;
   const label = m.role === 'assistant' ? m.model ?? 'Assistant' : m.role === 'user' ? 'You' : m.role === 'tool' ? 'Imported tool record' : 'System';
   const files = m.attachments.map(attachmentHtml).join('');
-  const thinking = m.reasoning ? `<details class="reasoning" data-reasoning="${esc(m.id)}" ${state.openReasoning.has(m.id) ? 'open' : ''}><summary>Reasoning</summary><div class="message-body">${markdown(m.reasoning, { streaming: m.status === 'streaming' })}</div></details>` : '';
+  const thinking = m.reasoning ? `<details class="reasoning" data-reasoning="${esc(m.id)}" ${state.openReasoning.has(m.id) ? 'open' : ''}><summary>Reasoning</summary><div class="message-body">${markdown(m.reasoning, { streaming: m.status === 'streaming', conversationId: c.id })}</div></details>` : '';
   const status = m.status === 'complete' ? '' : `<span class="badge">${esc(m.status)}</span>`;
-  const body = m.role === 'user' ? esc(m.content) : markdown(m.content, { streaming: m.status === 'streaming' });
+  const body = m.role === 'user' ? esc(m.content) : markdown(m.content, { streaming: m.status === 'streaming', conversationId: c.id });
   const actions = `<button data-copy="${esc(m.id)}">Copy</button>${m.role === 'user' ? `<button data-edit="${esc(m.id)}" ${active ? 'disabled' : ''}>Edit</button>` : ''}${m.role === 'assistant' ? `<button data-regenerate="${esc(m.id)}" ${active ? 'disabled' : ''}>Regenerate</button>` : ''}`;
   const branches = siblings.length > 1 ? `<button data-branch="${esc(siblings[Math.max(0,index-1)].id)}" ${index === 0 || active ? 'disabled' : ''}>Previous</button><span class="branch-count">${index+1} / ${siblings.length}</span><button data-branch="${esc(siblings[Math.min(siblings.length-1,index+1)].id)}" ${index === siblings.length-1 || active ? 'disabled' : ''}>Next</button>` : '';
   const error = m.metadata.error ? `<div class="message-error">${esc(m.metadata.error)}</div>` : '';
   const unsupported = m.metadata.unsupportedAttachments?.length ? `<div class="message-error">Archived attachments are retained in the export but cannot be sent: ${m.metadata.unsupportedAttachments.map(esc).join(', ')}.</div>` : '';
   const meta = `${m.providerName ? esc(m.providerName) : ''}${m.metadata.finishReason === 'length' ? ' · Output token limit reached' : ''}`;
-  return `<article class="message ${esc(m.role)}" data-message="${esc(m.id)}"><div class="message-header"><strong>${esc(label)}</strong>${status}</div>${thinking}<div class="message-body">${body || (m.status === 'streaming' ? '<span class="muted">Generating...</span>' : '')}</div>${files ? `<div class="file-links">${files}</div>` : ''}${toolActivityHtml(m)}${error}${unsupported}${meta ? `<div class="message-meta">${meta}</div>` : ''}${statisticsHtml(m)}<div class="message-actions">${actions}${branches}</div></article>`;
+  return `<article class="message ${esc(m.role)}" data-message="${esc(m.id)}"><div class="message-header"><strong>${esc(label)}</strong>${status}</div>${thinking}<div class="message-body">${body || (m.status === 'streaming' ? '<span class="muted">Generating...</span>' : '')}</div>${files ? `<div class="file-links">${files}</div>` : ''}${generatedFilesHtml(m)}${toolActivityHtml(m)}${error}${unsupported}${meta ? `<div class="message-meta">${meta}</div>` : ''}${statisticsHtml(m)}<div class="message-actions">${actions}${branches}</div></article>`;
 }
 function renderThread(forceBottom = false) {
   const thread = $('#thread'), top = thread.scrollTop, bottom = thread.scrollHeight - top - thread.clientHeight < 110;
@@ -195,6 +195,9 @@ function renderThread(forceBottom = false) {
   for (const details of thread.querySelectorAll('details[data-reasoning], details[data-stats]')) {
     const set = details.dataset.reasoning ? state.openReasoning : state.openStats, id = details.dataset.reasoning ?? details.dataset.stats;
     if (details.open) set.add(id); else set.delete(id);
+  }
+  for (const details of thread.querySelectorAll('details[data-tool-detail]')) {
+    if (details.open) state.openTools.add(details.dataset.toolDetail); else state.openTools.delete(details.dataset.toolDetail);
   }
   const c = state.conversation, path = c ? pathMessages(c) : [];
   document.title = c ? `${c.title} | Common Chat` : 'Common Chat';
@@ -213,12 +216,13 @@ function renderThread(forceBottom = false) {
       const html = messageHtml(m, c); if (!html) continue;
       const template = document.createElement('template'); template.innerHTML = html;
       const fresh = template.content.firstElementChild, old = existing.get(m.id);
+      for (const details of fresh.querySelectorAll('[data-tool-detail]')) if (state.openTools.has(details.dataset.toolDetail)) details.open = true;
       const sourceKey = JSON.stringify([m.role, m.content, m.reasoning, m.status]);
       let node = fresh;
       if (old?.renderSourceKey === sourceKey) {
         node = old;
         // Update statistics, actions and metadata without moving the body.
-        for (const name of ['message-header', 'message-stats', 'message-actions', 'message-meta', 'message-error', 'tool-activity']) {
+        for (const name of ['message-header', 'message-stats', 'message-actions', 'message-meta', 'message-error', 'generated-files', 'tool-activity']) {
           const oldPart = old.querySelector(`:scope > .${name}`), newPart = fresh.querySelector(`:scope > .${name}`);
           if (oldPart && newPart) oldPart.replaceWith(newPart);
           else if (oldPart) oldPart.remove();
@@ -462,6 +466,7 @@ async function openGeneration() {
     const opts = state.conversation.settings, caps = selectedProvider().capabilities;
     $('#system-prompt').value = opts.systemPrompt ?? '';
     $('#temperature').value = opts.temperature ?? ''; $('#top-p').value = opts.topP ?? ''; $('#max-tokens').value = opts.maxTokens ?? '';
+    $('#tool-calls').value = opts.toolCalls ?? ''; $('#tool-rounds').value = opts.toolRounds ?? '';
     for (const key of ['systemPrompt','temperature','topP','maxTokens']) $('#field-'+key).hidden = !caps[key];
     $('#generation-error').textContent = ''; $('#generation-dialog').showModal();
   } catch (e) { toast(e.message); }
@@ -473,6 +478,7 @@ async function saveGeneration(event) {
   for (const [key, selector] of [['temperature','#temperature'], ['topP','#top-p'], ['maxTokens','#max-tokens']]) {
     if (caps[key] && $(selector).value !== '') opts[key] = Number($(selector).value);
   }
+  for (const [key, selector] of [['toolCalls', '#tool-calls'], ['toolRounds', '#tool-rounds']]) if ($(selector).value !== '') opts[key] = Number($(selector).value);
   try {
     state.conversation = await api(`/api/conversations/${c.id}`, 'PATCH', { expectedVersion: c.version, settings: opts });
     $('#generation-dialog').close(); toast('Conversation settings saved.');
@@ -566,7 +572,7 @@ async function boot() {
     $('#release-badge').textContent = session.release?.channel ?? 'preview';
     await Promise.all([refreshList(), refreshProviders()]); await loadModels(false);
     await navigate(routeId());
-    connectEvents();
+    connectEvents(); toolControls?.checkRuntime();
   } catch (e) { showLogin(); if (e.status !== 401) $('#login-error').textContent = e.message; }
 }
 $('#login-form').addEventListener('submit', async event => {
@@ -595,7 +601,7 @@ $('#delete-provider').addEventListener('click', async () => {
 });
 $('#generation-button').addEventListener('click', openGeneration);
 $('#generation-form').addEventListener('submit', saveGeneration);
-$('#reset-generation').addEventListener('click', () => { for (const s of ['#system-prompt','#temperature','#top-p','#max-tokens']) $(s).value = ''; });
+$('#reset-generation').addEventListener('click', () => { for (const s of ['#system-prompt','#temperature','#top-p','#max-tokens','#tool-calls','#tool-rounds']) $(s).value = ''; });
 $('#preferences-button').addEventListener('click', () => $('#preferences-dialog').showModal());
 $('#theme-select').addEventListener('change', async () => {
   try { state.preferences = await api('/api/preferences','PUT',{ theme: $('#theme-select').value }); applyTheme(); }
@@ -644,6 +650,12 @@ $('#stop').addEventListener('click', async () => { try { if (state.conversation?
 $('#thread').addEventListener('click', event => {
   const b = event.target.closest('button'); if (!b) return;
   if ('codeCopy' in b.dataset) copyCode(b);
+  if ('pythonRun' in b.dataset) {
+    const block = b.closest('.code-block'), message = state.conversation?.messages.find(item => item.id === b.closest('[data-message]')?.dataset.message);
+    if (message?.role === 'assistant' && message.status !== 'streaming' && block?.dataset.codeComplete === 'true') workspaceUI?.openCode(block.querySelector('pre code')?.textContent ?? '');
+  }
+  if (b.dataset.workspacePreview) workspaceUI?.openFile(b.dataset.workspacePreview, b.dataset.revision);
+  if (b.dataset.executionResult) workspaceUI?.openExecution(b.dataset.executionResult);
   if ('openConnections' in b.dataset) openConnections();
   if ('import' in b.dataset) $('#import-input').click();
   if (b.dataset.copy) copyMessage(b.dataset.copy);
@@ -654,9 +666,9 @@ $('#thread').addEventListener('click', event => {
 $('#thread').addEventListener('toggle', event => {
   const target = event.target;
   if (!target.isConnected) return;
-  const id = target.dataset.reasoning ?? target.dataset.stats;
+  const id = target.dataset.reasoning ?? target.dataset.stats ?? target.dataset.toolDetail;
   if (!id) return;
-  const set = target.dataset.reasoning ? state.openReasoning : state.openStats;
+  const set = target.dataset.reasoning ? state.openReasoning : target.dataset.stats ? state.openStats : state.openTools;
   if (target.open) set.add(id); else set.delete(id);
 }, true);
 $('#import-button').addEventListener('click', () => $('#import-input').click());
@@ -702,7 +714,7 @@ window.addEventListener('beforeunload', event => {
   if (drafts.hasUnsaved || state.busy) { event.preventDefault(); event.returnValue = ''; }
 });
 installMediaControls();
-toolControls = installToolControls({ getProvider: selectedProvider, getConversation: () => state.conversation,
+toolControls = installToolControls({ api, getProvider: selectedProvider, getConversation: () => state.conversation,
   busy: () => state.busy || state.loading || !!state.retry || !!state.conversation?.activeJob });
 workspaceUI = installWorkspace({ api, getConversation: () => state.conversation,
   ensureConversation: async () => {

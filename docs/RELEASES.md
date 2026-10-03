@@ -8,6 +8,8 @@ Updates do not run automatically inside the chat process. No updater has the aut
 
 Use a clean checkout of an accepted commit on `main` with Node.js 24, Git, and GNU tar. The existing checks require no npm installation. Browser assets are already included.
 
+An explicitly approved maintainer-only local preview can use a clean feature-branch commit before integration. Keep its exact commit identity and rollback assets. This does not authorize publication, `main` integration, or stable promotion. Complete any required user verification and merge approval before the normal publication workflow below.
+
 ```sh
 npm run check
 npm test

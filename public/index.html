@@ -106,7 +106,12 @@
         <label class="field" id="field-topP">Top-p<input id="top-p" type="number" min="0" max="1" step="0.01" placeholder="Provider default"></label>
         <label class="field" id="field-maxTokens">Output token limit<input id="max-tokens" type="number" min="1" max="1000000" step="1" placeholder="Provider default"></label>
       </div>
-      <p class="small">Unsupported controls are hidden. Saving removes unsupported settings. Each response retains its own generation settings.</p>
+      <div class="form-grid">
+        <label class="field">Tool call budget per turn<input id="tool-calls" type="number" min="1" max="1000000" step="1" placeholder="Off (no call budget)"></label>
+        <label class="field">Tool round budget per turn<input id="tool-rounds" type="number" min="1" max="1000000" step="1" placeholder="Off (no round budget)"></label>
+      </div>
+      <p class="small">Tool budgets are optional and off when blank. A round is one response that requests tools. The final text answer does not count. At a budget, completed work stays saved and the model receives a final-answer request. Argument, context, output, resource, and time limits still apply.</p>
+      <p class="small">Unsupported provider controls are hidden. Each response retains its own settings.</p>
       <p id="generation-error" class="error" role="alert"></p>
       <div class="dialog-footer"><button type="button" class="ghost" id="reset-generation">Use provider defaults</button><button type="submit" class="primary">Save settings</button></div>
     </form>

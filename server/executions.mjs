@@ -1,4 +1,5 @@
 import { fail, hash, id, now, object, text } from './validation.mjs';
+import { runnerFailure, packageConsole } from '../runner/errors.mjs';
 
 const MiB = 1024 * 1024;
 export const EXECUTION_LIMITS = Object.freeze({
@@ -50,7 +51,14 @@ function safeOutput(value) {
 function safeFailure(error) {
   // App validation errors are fixed messages. Never expose a broker/engine stack or host path.
   return Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
-    ? String(error.message).slice(0, 1000) : 'The isolated runner failed. Check its status and administrator logs.';
+    ? String(error.message).slice(0, 1000) : runnerFailure(error?.publicMessage ?? error);
+}
+function validatedInventory(value) {
+  if (!value || !Array.isArray(value.python) || value.python.length > 128 ||
+      value.python.some(item => typeof item?.name !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/.test(item.name) || typeof item.version !== 'string' || !/^[0-9][A-Za-z0-9.!+_-]{0,59}$/.test(item.version)) ||
+      !/^\d+\.\d+\.\d+$/.test(value.pythonVersion) || !/^v\d+\.\d+\.\d+$/.test(value.nodeVersion)) return null;
+  return { ...(typeof value.imageId === 'string' && /^[a-f0-9]{64}$/.test(value.imageId) ? { imageId: value.imageId } : {}),
+    pythonVersion: value.pythonVersion, nodeVersion: value.nodeVersion, python: value.python.map(({ name, version }) => ({ name, version })) };
 }
 function executionInput(value) {
   fields(value, ['kind', 'code', 'allowPackages'], 'execution');
@@ -80,6 +88,7 @@ export class Executions {
         specs TEXT NOT NULL, updated_at INTEGER NOT NULL
       );
     `);
+    if (!store.all('PRAGMA table_info(executions)').some(column => column.name === 'operation_id')) store.db.exec('ALTER TABLE executions ADD COLUMN operation_id TEXT');
     store.transaction(() => {
       const rows = store.all("SELECT DISTINCT conversation_id FROM executions WHERE status='running'");
       store.run("UPDATE executions SET status='interrupted',error='The server stopped before completion. The operation was not replayed.',updated_at=? WHERE status='running'", now());
@@ -106,7 +115,8 @@ export class Executions {
         if (typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= Number.MAX_SAFE_INTEGER) runnerLimits[key] = value;
       }
       return { enabled, ready, packages: ready && (caps.installs === true || caps.packages === true),
-        limits: { ...EXECUTION_LIMITS, runner: runnerLimits }, blockedReasons: ready ? [] : ['The isolated runner is not ready. Check its installation and administrator logs.'] };
+        limits: { ...EXECUTION_LIMITS, runner: runnerLimits }, inventory: ready ? validatedInventory(caps.inventory) : null,
+        blockedReasons: ready ? [] : (caps.blockedReasons ?? []).slice(0, 4).map(runnerFailure) };
     } catch {
       signal?.throwIfAborted();
       return unavailable('The isolated runner is unavailable or its capability check timed out.');
@@ -129,13 +139,15 @@ export class Executions {
   }
   list(cid) {
     this.store.conversation(cid);
-    return { executions: this.store.all('SELECT id,kind,status,exit_code AS exitCode,error,created_at AS createdAt,updated_at AS updatedAt FROM executions WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 20', cid) };
+    return { executions: this.store.all('SELECT id,operation_id AS operationId,kind,status,exit_code AS exitCode,error,created_at AS createdAt,updated_at AS updatedAt FROM executions WHERE conversation_id=? ORDER BY created_at DESC,id DESC LIMIT 20', cid) };
   }
   get(cid, executionId) {
     this.store.conversation(cid);
     const row = this.store.get('SELECT * FROM executions WHERE id=? AND conversation_id=?', executionId, cid);
     if (!row) fail(404, 'Execution not found.');
-    return { id: row.id, kind: row.kind, status: row.status, stdout: row.stdout, stderr: row.stderr,
+    return { id: row.id, operationId: row.operation_id, kind: row.kind, status: row.status, stdout: row.stdout, stderr: row.stderr,
+      availableFiles: this.workspace.list(cid).files.filter(file => !file.deleted).map(file => fileLink(cid, file)),
+      fileNote: 'files contains only created or changed revisions from this operation. availableFiles lists stored current files, not proof that this operation created or tested them.',
       exitCode: row.exit_code, files: JSON.parse(row.files), error: row.error, createdAt: row.created_at, updatedAt: row.updated_at };
   }
   async #start(cid, input, { jobId, signal } = {}) {
@@ -176,8 +188,7 @@ export class Executions {
     const state = await this.#start(cid, { kind: 'packages', packages, allowPackages: true }, context);
     await state.promise;
     const result = this.get(cid, state.id);
-    if (result.status !== 'complete') fail(result.status === 'cancelled' ? 409 : 502, result.error ?? 'Package installation did not complete.');
-    return this.getPackages(cid);
+    return { ...this.getPackages(cid), ...result, saved: result.status === 'complete' };
   }
   async #run(state, parentSignal) {
     const { id: executionId, cid, controller, input } = state;
@@ -186,19 +197,26 @@ export class Executions {
       ? Math.min(this.installMs + this.executionMs + 20000, EXECUTION_LIMITS.packageExecutionMs) : this.executionMs;
     const timeout = AbortSignal.timeout(duration);
     const signal = AbortSignal.any([controller.signal, timeout, ...(parentSignal ? [parentSignal] : [])]);
-    let status = 'error', stdout = '', stderr = '', exitCode = null, files = [], error = null;
+    let status = 'error', stdout = '', stderr = '', exitCode = null, files = [], error = null, operationId = null;
     try {
       signal.throwIfAborted();
       if (input.kind === 'packages') {
         const installed = await this.runner.install({ workspaceId: cid, packages: input.packages, signal });
+        operationId = installed.operationId ?? null;
         signal.throwIfAborted();
+        stdout = packageConsole(safeOutput(installed.stdout));
+        stderr = packageConsole(safeOutput(installed.stderr));
+        if (installed.status && installed.status !== 'complete') {
+          status = statuses.has(installed.status) ? installed.status : 'error';
+          error = runnerFailure(installed.error); exitCode = installed.exitCode ?? null; return;
+        }
         const resolved = packageSpecs(installed?.packages ?? installed);
         this.store.transaction(() => {
           this.store.conversation(cid); signal.throwIfAborted();
           this.store.run('INSERT INTO workspace_packages(conversation_id,specs,updated_at) VALUES(?,?,?) ON CONFLICT(conversation_id) DO UPDATE SET specs=excluded.specs,updated_at=excluded.updated_at', cid, JSON.stringify(resolved), now());
         });
         status = 'complete'; exitCode = 0;
-        stdout = `Saved ${resolved.pip.length} pip and ${resolved.npm.length} npm package specifications.`;
+        stdout = `${installed.summary ?? 'Packages validated in isolated scratch.'}\nSaved ${resolved.pip.length} pip and ${resolved.npm.length} npm package specifications.\n${stdout}`;
       } else {
         const snapshot = await this.workspace.snapshot(cid);
         signal.throwIfAborted();
@@ -210,7 +228,7 @@ export class Executions {
           return { path: file.path, mime: file.mime, bytes };
         });
         const result = await this.runner.execute({ workspaceId: cid, kind: input.kind, code: input.code, files: inputs, packages: input.packages, signal });
-        signal.throwIfAborted();
+        operationId = result.operationId ?? null; signal.throwIfAborted();
         if (!statuses.has(result?.status)) throw new Error('Invalid runner status.');
         if (typeof result.stdout === 'string' && Buffer.byteLength(result.stdout) > EXECUTION_LIMITS.outputBytes || typeof result.stderr === 'string' && Buffer.byteLength(result.stderr) > EXECUTION_LIMITS.outputBytes) throw new Error('Runner output exceeded its limit.');
         const nextStdout = safeOutput(result.stdout), nextStderr = safeOutput(result.stderr);
@@ -243,16 +261,17 @@ export class Executions {
         } else error = status === 'cancelled' ? 'Execution was cancelled. Workspace files were not changed.'
           : status === 'timed_out' ? 'Execution exceeded its deadline. Workspace files were not changed.'
           : status === 'interrupted' ? 'Execution was interrupted. Workspace files were not changed.'
-          : 'Execution failed. Workspace files were not changed. See the bounded stdout and stderr.';
+          : `${result.error ? runnerFailure(result.error) : 'Execution failed.'} Workspace files were not changed. See the bounded stdout and stderr.`;
       }
     } catch (cause) {
+      operationId = cause?.operationId ?? operationId;
       if (state.reason === 'shutdown') { status = 'interrupted'; error = 'The server stopped. The operation was not replayed.'; }
       else if (state.reason === 'cancelled' || parentSignal?.aborted && parentSignal.reason?.name !== 'TimeoutError') { status = 'cancelled'; error = 'Execution was cancelled. Workspace files were not changed.'; }
       else if (timeout.aborted || parentSignal?.aborted && parentSignal.reason?.name === 'TimeoutError') { status = 'timed_out'; error = 'Execution exceeded its deadline. Workspace files were not changed.'; }
       else { status = 'error'; error = safeFailure(cause); }
     } finally {
       this.store.transaction(() => {
-        this.store.run('UPDATE executions SET status=?,stdout=?,stderr=?,exit_code=?,files=?,error=?,updated_at=? WHERE id=?', status, stdout, stderr, exitCode, JSON.stringify(files), error, now(), executionId);
+        this.store.run('UPDATE executions SET status=?,stdout=?,stderr=?,exit_code=?,files=?,error=?,operation_id=?,updated_at=? WHERE id=?', status, stdout, stderr, exitCode, JSON.stringify(files), error, typeof operationId === 'string' && /^[a-f0-9-]{36}$/.test(operationId) ? operationId : null, now(), executionId);
         this.store.touch(cid);
       });
       this.active.delete(executionId);
