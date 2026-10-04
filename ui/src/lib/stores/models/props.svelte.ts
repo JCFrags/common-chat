@@ -13,10 +13,10 @@ export interface ModelPropsHost {
 export class ModelPropsManager {
 	constructor(private host: ModelPropsHost) {}
 	get cacheVersion(): number { return commonStore.catalogs.get(commonStore.selectedProviderId)?.checkedAt ?? 0; }
-	get supportsThinking(): boolean { return commonStore.selectedThinking.protocol !== 'none'; }
+	get supportsThinking(): boolean { return ['llama_cpp', 'reasoning_effort', 'openrouter_reasoning'].includes(commonStore.selectedThinking.protocol); }
 	checkModelSupportsThinking(id: string): boolean {
-		return commonStore.catalogs.get(commonStore.selectedProviderId)?.details.find((d) => d.id === id)?.thinking.protocol !== 'none'
-			&& !!commonStore.catalogs.get(commonStore.selectedProviderId)?.details.find((d) => d.id === id);
+		const declaration = commonStore.catalogs.get(commonStore.selectedProviderId)?.details.find((d) => d.id === id)?.thinking;
+		return !!declaration && ['llama_cpp', 'reasoning_effort', 'openrouter_reasoning'].includes(declaration.protocol);
 	}
 	getModelContextSize(_id: string): null { return null; }
 	getModelModalities(id: string): ModelModalities | null {

@@ -18,8 +18,9 @@ class ModelsStore {
 		const catalog = commonStore.catalogs.get(provider.id);
 		return (catalog?.models ?? provider.models).map((model) => {
 			const detail = catalog?.details.find((d) => d.id === model);
+			const name = detail?.nickname || detail?.name || model;
 			return { id: modelSelectionId(provider.id, model), model,
-				name: detail?.nickname || detail?.name || model, capabilities: [],
+				name, aliases: name === model ? undefined : [name], capabilities: [],
 				modalities: { vision: provider.capabilities.vision === true,
 					audio: provider.capabilities.audioInput === 'llama_cpp', video: provider.capabilities.videoInput === 'llama_cpp' } };
 		});
@@ -31,6 +32,13 @@ class ModelsStore {
 	private _props = new ModelPropsManager(this);
 	private _status = new ModelStatusManager(this);
 	private inflight: Promise<void> | null = null;
+	constructor() {
+		commonStore.subscribe((change) => {
+			if ((change.type === 'providers' || change.type === 'session') && commonStore.session?.authenticated) {
+				void this.fetch().catch(() => {});
+			}
+		});
+	}
 	get props() { return this._props; }
 	get status() { return this._status; }
 	get activeModelId(): string | null { return this.selectedModelName; }
@@ -52,11 +60,15 @@ class ModelsStore {
 				if (!commonStore.session?.authenticated) await commonStore.initialize();
 				if (!commonStore.session?.authenticated) return;
 				if (!commonStore.providers.length) await commonStore.refreshProviders();
-				const id = commonStore.selectedProviderId;
-				if (id && (force || !commonStore.catalogs.has(id))) await commonStore.refreshCatalog(id, force);
+				let id = commonStore.selectedProviderId;
+				while (id && commonStore.selectedProvider) {
+					if (force || !commonStore.catalogs.has(id)) await commonStore.refreshCatalog(id, force);
+					if (id === commonStore.selectedProviderId && commonStore.catalogs.has(id)) break;
+					id = commonStore.selectedProviderId;
+				}
 			} catch (error) { this.error = error instanceof Error ? error.message : String(error); throw error; }
-			finally { this.loading = false; this.inflight = null; }
-		})();
+			finally { this.loading = false; }
+		})().finally(() => { this.inflight = null; });
 		return this.inflight;
 	}
 	async fetchRouterModels(): Promise<void> { await this.fetch(); }

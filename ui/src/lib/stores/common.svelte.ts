@@ -6,6 +6,10 @@ import type {
 } from '$lib/types/common-api';
 import { SvelteMap } from 'svelte/reactivity';
 
+const catalogConfig = (provider?: CommonProvider) => provider && JSON.stringify([
+	provider.baseUrl, provider.hasKey, provider.models, provider.capabilities, provider.modelConfig
+]);
+
 export type CommonChange =
 	| { type: 'snapshot'; snapshot: CommonSnapshot }
 	| { type: 'deleted'; id: string }
@@ -30,6 +34,7 @@ class CommonStore {
 	private reconnecting: Promise<void> | null = null;
 	private refreshing = new Map<string, Promise<CommonSnapshot>>();
 	private epoch = 0;
+	private providerVersions = new Map<string, number>();
 
 	constructor() {
 		setUnauthorizedHandler(() => this.signedOut());
@@ -110,6 +115,7 @@ class CommonStore {
 		this.eventStatus = 'offline';
 		this.session = { authenticated: false, authenticationRequired: true, settings: {} };
 		this.providers = [];
+		this.providerVersions.clear();
 		this.catalogs.clear();
 		this.snapshots.clear();
 		this.conversations = [];
@@ -122,17 +128,27 @@ class CommonStore {
 		const epoch = this.epoch;
 		const providers = await api<CommonProvider[]>('/api/providers');
 		if (epoch !== this.epoch) return;
+		const previous = new Map(this.providers.map((provider) => [provider.id, provider]));
+		const next = new Map(providers.map((provider) => [provider.id, provider]));
+		for (const id of new Set([...previous.keys(), ...next.keys()])) {
+			if (catalogConfig(previous.get(id)) !== catalogConfig(next.get(id))) {
+				this.catalogs.delete(id);
+				this.providerVersions.set(id, (this.providerVersions.get(id) ?? 0) + 1);
+			}
+		}
 		this.providers = providers;
-		this.catalogs.clear();
 		if (!this.selectedProviderId && providers.length) this.selectedProviderId = providers[0].id;
 		this.notify({ type: 'providers' });
 	}
 
 	async refreshCatalog(id = this.selectedProviderId, refresh = false): Promise<CommonCatalog> {
 		if (!id) throw new Error('Choose a Common connection first.');
-		const epoch = this.epoch;
+		const epoch = this.epoch, version = this.providerVersions.get(id);
 		const catalog = await api<CommonCatalog>(`/api/providers/${encodeURIComponent(id)}/models${refresh ? '?refresh=1' : ''}`);
-		if (epoch === this.epoch) this.catalogs.set(id, catalog);
+		// A late response cannot restore metadata invalidated by a connection change.
+		if (epoch === this.epoch && version === this.providerVersions.get(id) && this.providers.some((provider) => provider.id === id)) {
+			this.catalogs.set(id, catalog);
+		}
 		return catalog;
 	}
 

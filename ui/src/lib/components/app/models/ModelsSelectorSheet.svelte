@@ -105,6 +105,7 @@
 						hideOrgName
 						hideQuantization
 						hideTags
+						aliases={selectedOption.aliases}
 						modelId={selectedOption?.model || ''}
 					/>
 				{/if}
@@ -191,7 +192,7 @@
 			>
 				<Package class="h-3.5 w-3.5 shrink-0" />
 
-				<ModelId class="font-medium" hideQuantization modelId={selectedOption?.model || ''} />
+				<ModelId aliases={selectedOption?.aliases} class="font-medium" hideQuantization modelId={selectedOption?.model || ''} />
 
 				{#if ms.updating}
 					<Loader2 class="h-3 w-3.5 shrink-0 animate-spin" />

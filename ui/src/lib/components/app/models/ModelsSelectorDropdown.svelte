@@ -231,6 +231,7 @@
 											class="min-w-0 overflow-hidden"
 											hideOrgName={!showOrgNameInTrigger}
 											hideQuantization
+											aliases={selectedOption.aliases}
 											modelId={selectedOption.model}
 										/>
 									{:else}
@@ -276,6 +277,7 @@
 									class="min-w-0 flex-1 overflow-hidden"
 									hideOrgName={!showOrgNameInTrigger}
 									hideQuantization
+									aliases={selectedOption.aliases}
 									modelId={selectedOption.model}
 								/>
 							{:else}
@@ -383,6 +385,7 @@
 									class="min-w-0 overflow-hidden"
 									hideOrgName={!showOrgNameInTrigger}
 									hideQuantization
+									aliases={selectedOption.aliases}
 									modelId={selectedOption.model}
 								/>
 							{/if}

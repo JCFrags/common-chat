@@ -20,12 +20,12 @@ export interface UseReasoningMenuReturn {
 export function useReasoningMenu(): UseReasoningMenuReturn {
 	const declaration = $derived(commonStore.selectedThinking);
 	const currentEffort = $derived(conversationsStore.preferences.getReasoningEffort());
-	const modelSupportsThinking = $derived(declaration.protocol !== 'none');
+	const modelSupportsThinking = $derived(declaration.protocol !== 'none' && declaration.protocol !== 'unknown');
 	const isOff = $derived(currentEffort === ReasoningEffort.OFF || currentEffort === ReasoningEffort.NONE);
 	const labels: Record<string, string> = { on: 'On', off: 'Off', none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
 	const levels = $derived<ReasoningEffortLevel[]>([
 		{ label: 'Default', value: ReasoningEffort.DEFAULT },
-		...(declaration.protocol === 'llama_cpp' ? ['on', 'off'] : declaration.protocol === 'none' ? [] : declaration.levels)
+		...(declaration.protocol === 'llama_cpp' ? ['on', 'off'] : !modelSupportsThinking ? [] : declaration.levels)
 			.map((value) => ({ label: labels[value] ?? value, value: value as ReasoningEffort }))
 	]);
 	return {

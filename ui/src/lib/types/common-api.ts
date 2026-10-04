@@ -1,5 +1,5 @@
 export interface CommonThinking {
-	protocol: 'none' | 'llama_cpp' | 'reasoning_effort' | 'openrouter_reasoning';
+	protocol: 'unknown' | 'none' | 'llama_cpp' | 'reasoning_effort' | 'openrouter_reasoning';
 	levels: string[];
 	source?: string;
 }
@@ -17,7 +17,7 @@ export interface CommonProvider {
 		audioInput?: string;
 		videoInput?: string;
 		llamaCppSampling?: boolean;
-		thinking?: CommonThinking['protocol'];
+		thinking?: Exclude<CommonThinking['protocol'], 'unknown'>;
 		thinkingLevels?: string[];
 		[key: string]: unknown;
 	};
