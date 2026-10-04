@@ -2,7 +2,9 @@
 
 Common Chat is independently named. It is not an official llama.cpp release.
 
-The browser theme in `public/theme.css` adapts CSS custom properties from the upstream file listed below. The adaptation retains dark and light theme values. It omits Tailwind directives and unused tokens. The application logic, server, and restricted Markdown renderer are new implementations.
+The `ui/` directory contains the actual llama.cpp Svelte frontend from commit `0c1e57098bba43ac29e6e3b677cdceebdd22334f`, including its components, stores, services, styles, build configuration, and existing tests. The upstream `tools/ui` tree is `d28bac24cdd9b83739340cb8488b6224b817e123`. `ui/LICENSE` and `licenses/llama.cpp.txt` retain its MIT notice. Common Chat adapts this frontend to its independent server and additional features.
+
+The original Common Chat frontend was a separate browser-JavaScript implementation. Its `public/theme.css` adapts CSS custom properties from the older upstream source below. The independent Node.js server, restricted renderer, workspace, and isolated runner are Common Chat implementations.
 
 ```text
 Repository: ggml-org/llama.cpp
@@ -13,7 +15,7 @@ License: MIT
 Copyright: Copyright (c) 2023-2026 The ggml authors
 ```
 
-The archive preserves the upstream notice in `licenses/llama.cpp.txt`. No upstream fonts, logos, inference binaries, or complete Svelte components are bundled.
+The imported frontend retains upstream resources needed to build its interface. Common Chat does not bundle a llama.cpp inference binary and is not an official upstream distribution.
 
 The following upstream files informed the import format and architecture review.
 
