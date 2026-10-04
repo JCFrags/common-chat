@@ -17,6 +17,8 @@
 	import { ColorMode } from '$lib/enums/ui.enums';
 	import { modelsStore, serverStore, settingsStore } from '$lib/stores';
 	import { commonStore } from '$lib/stores/common.svelte';
+	import CommonTools from '$lib/components/common/CommonTools.svelte';
+	import CommonMcp from '$lib/components/common/CommonMcp.svelte';
 	import { generationSettings } from '$lib/utils/common-settings';
 	import { sanitizeDeviceConfig } from '$lib/services/settings.service';
 	import type { SettingsSection, SettingsSectionTitle } from '$lib/types';
@@ -149,7 +151,10 @@
 			<div class="space-y-6 pt-3">
 				<div class="grid">
 					{#if currentSection.slug === SETTINGS_SECTION_SLUGS.TOOLS}
-						<p>Configured native function tools are available automatically. Each new turn checks connection capabilities and runner availability. Saved activity does not grant future permission. Manual Run and package consent stay separate. Native tool budgets are off unless explicitly set. Browser MCP, host working directories and raw llama.cpp management are disabled.</p>
+						<div class="space-y-6">
+							<CommonTools />
+							<CommonMcp />
+						</div>
 					{:else if currentSection.slug === SETTINGS_SECTION_SLUGS.IMPORT_EXPORT}
 						<SettingsChatImportExportTab />
 					{:else if currentSection.fields}

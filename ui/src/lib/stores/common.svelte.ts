@@ -5,6 +5,7 @@ import type {
 	CommonSnapshot, CommonMessage, CommonThinking
 } from '$lib/types/common-api';
 import { SvelteMap } from 'svelte/reactivity';
+import { commonMcpState } from '$lib/services/common-mcp.svelte';
 
 const catalogConfig = (provider?: CommonProvider) => provider && JSON.stringify([
 	provider.baseUrl, provider.hasKey, provider.models, provider.capabilities, provider.modelConfig
@@ -13,7 +14,7 @@ const catalogConfig = (provider?: CommonProvider) => provider && JSON.stringify(
 export type CommonChange =
 	| { type: 'snapshot'; snapshot: CommonSnapshot }
 	| { type: 'deleted'; id: string }
-	| { type: 'list' | 'providers' | 'session' | 'runtime' | 'reconnect' | 'signed-out' };
+	| { type: 'list' | 'providers' | 'session' | 'runtime' | 'reconnect' | 'signing-out' | 'signed-out' };
 
 class CommonStore {
 	session = $state<CommonSession | null>(null);
@@ -104,12 +105,16 @@ class CommonStore {
 
 	async logout(): Promise<void> {
 		if (this.session?.authenticationRequired === false) return;
+		// Cancel transient input immediately. Keep authentication and drafts until logout succeeds.
+		commonMcpState.reset();
+		this.notify({ type: 'signing-out' });
 		await api('/api/logout', 'POST', {});
 		this.signedOut();
 	}
 
 	signedOut(): void {
 		this.epoch++;
+		commonMcpState.reset();
 		this.events?.close();
 		this.events = null;
 		this.eventStatus = 'offline';
@@ -159,7 +164,7 @@ class CommonStore {
 			if (epoch === this.epoch) this.runtime = runtime;
 		} catch (error) {
 			if (epoch === this.epoch) this.runtime = {
-				ready: false, packages: false,
+				enabled: false, ready: false, packages: false,
 				blockedReasons: [error instanceof Error ? error.message : 'Runner availability could not be checked.']
 			};
 		}
@@ -198,8 +203,9 @@ class CommonStore {
 			throw new Error('The connection changed while checking native tools. Review it before sending.');
 		}
 		const enabled = this.selectedProvider?.capabilities.tools === true;
-		return { workspace: enabled, execute: enabled && this.runtime?.ready === true,
-			packages: enabled && this.runtime?.ready === true && this.runtime?.packages === true };
+		const ready = this.runtime?.enabled === true && this.runtime.ready === true;
+		return { workspace: enabled, execute: enabled && ready,
+			packages: enabled && ready && this.runtime?.packages === true };
 	}
 
 	setActive(id: string | null): void {

@@ -31,6 +31,7 @@
 	const activity = $derived(Array.isArray(meta.toolActivity) ? meta.toolActivity.map(record) : []);
 	const budget = $derived(record(meta.toolBudget));
 	const permissions = $derived(record(meta.toolPermissions));
+	const mcpPermissions = $derived(Array.isArray(permissions.mcp) ? permissions.mcp.map(record) : []);
 	const usage = $derived(record(meta.usage));
 	const timings = $derived(record(meta.timings));
 	const observed = $derived(record(meta.observed));
@@ -159,6 +160,17 @@
 			{:else if activity.length}<p>
 					Permission provenance is unavailable for this saved history.
 				</p>{/if}
+			{#if mcpPermissions.length}
+				<details>
+					<summary class="cursor-pointer">Recorded MCP selections · {mcpPermissions.length} connections</summary>
+					{#each mcpPermissions as selection}
+						<p class="mt-2 break-all text-xs">
+							Connection: {text(selection.connectionId) || 'unavailable'}. Catalog: {text(selection.catalogRevision) || 'unavailable'}.
+							Tools: {Array.isArray(selection.tools) ? selection.tools.map(text).filter(Boolean).join(', ') : 'unavailable'}.
+						</p>
+					{/each}
+				</details>
+			{/if}
 			{#if Object.keys(budget).length}
 				<p>
 					{count(budget.executedCalls)} executed calls. {count(budget.executedRounds)} executed tool rounds.
@@ -177,10 +189,14 @@
 				{#each activity as item}
 					<details class="rounded-md border border-border/30 p-2" open={item.status === 'running'}>
 						<summary class="cursor-pointer"
-							>{names[text(item.name)] || text(item.name) || 'Tool'} · {text(item.status) ||
+							>{item.source === 'mcp' ? `${text(item.connectionName) || 'MCP'}: ${text(item.toolName) || text(item.name)}` : names[text(item.name)] || text(item.name) || 'Tool'} · {text(item.status) ||
 								'archived'}{item.error ? ' · error recorded' : ''}</summary
 						>
 						<div class="mt-2 space-y-2">
+							{#if item.source === 'mcp'}<p class="break-all text-xs text-muted-foreground">
+								MCP connection: {text(item.connectionId) || 'unavailable'}. Catalog: {text(item.catalogRevision) || 'unavailable'}.
+								Remote results do not prove that side effects were reversed or stopped.
+							</p>{/if}
 							<pre class="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">{text(
 									item.summary
 								)}</pre>

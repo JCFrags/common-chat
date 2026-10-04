@@ -297,6 +297,9 @@
 	});
 
 	onMount(() => {
+		const unsubscribe = commonStore.subscribe((change) => {
+			if (change.type === 'signing-out') invalidateDictationTarget();
+		});
 		const pendingDraft = chatStore.consumePendingDraft();
 
 		if (pendingDraft) {
@@ -316,6 +319,7 @@
 		}
 
 		handleMobileScroll();
+		return unsubscribe;
 	});
 
 	onDestroy(() => autoScroll.destroy());

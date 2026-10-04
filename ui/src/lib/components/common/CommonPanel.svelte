@@ -6,10 +6,12 @@
 	import CommonDictationSettings from './CommonDictationSettings.svelte';
 	import CommonFiles from './CommonFiles.svelte';
 	import CommonRun from './CommonRun.svelte';
+	import CommonTools from './CommonTools.svelte';
+	import CommonMcp from './CommonMcp.svelte';
 	import { createWorkspaceSession, dirtyFile, type WorkspaceSession } from './workspace-state';
 	import { errorText } from './api';
 
-	type Section = 'connections' | 'dictation' | 'files' | 'run';
+	type Section = 'connections' | 'dictation' | 'tools' | 'files' | 'run';
 	interface Props {
 		conversationId: string | null;
 		ensureConversation: () => Promise<string>;
@@ -136,7 +138,7 @@
 			></Dialog.Header
 		>
 		<nav class="flex flex-wrap gap-1" aria-label="Common panel sections">
-			{#each [['connections', 'Connections'], ['dictation', 'Dictation'], ['files', 'Files'], ['run', 'Run and packages']] as [value, label]}<Button
+			{#each [['connections', 'Connections'], ['dictation', 'Dictation'], ['tools', 'Tools and MCP'], ['files', 'Files'], ['run', 'Run and packages']] as [value, label]}<Button
 					variant={section === value ? 'secondary' : 'ghost'}
 					size="sm"
 					aria-current={section === value ? 'page' : undefined}
@@ -146,6 +148,7 @@
 		<div class="min-w-0">
 			{#if section === 'connections'}<CommonConnections onChanged={onConnectionsChanged} />
 			{:else if section === 'dictation'}<CommonDictationSettings onChanged={onConnectionsChanged} />
+			{:else if section === 'tools'}<div class="space-y-6 max-h-[60dvh] overflow-auto pr-1"><CommonTools /><CommonMcp /></div>
 			{:else if cid && session}
 				{#if section === 'files'}<CommonFiles
 						bind:this={filesRef}

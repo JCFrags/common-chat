@@ -14,6 +14,7 @@ import type { CommonGeneration, CommonReceipt, CommonSnapshot } from '$lib/types
 import type { DatabaseMessage, DatabaseMessageExtra } from '$lib/types/database';
 import type { ChatUploadedFile, ErrorDialogState } from '$lib/types/chat';
 import { generationSettings } from '$lib/utils/common-settings';
+import { confirmSelections } from '$lib/services/common-mcp.svelte';
 import { findDescendantMessages, generateConversationTitle } from '$lib/utils';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { toast } from 'svelte-sonner';
@@ -102,8 +103,16 @@ class ChatStore {
 			if (commonStore.selectedModel !== model || commonStore.activeId !== id) {
 				throw new Error('The model or conversation changed while checking native tools. Review the target before sending.');
 			}
+			const mcp = await confirmSelections(commonStore.selectedProvider ?? {}, id);
+			if (mcp.selections.length && !window.confirm(
+				`Allow these MCP tools for this submission to ${commonStore.selectedProvider?.name} in "${snapshot.title}"?\n\n${mcp.labels.join('\n')}\n\nThe model can call only these selected MCP tools. They can have side effects. Saved activity does not grant future permission.`
+			)) return false;
+			if (commonStore.selectedProviderId !== providerId || commonStore.selectedModel !== model ||
+				commonStore.activeId !== id || !commonStore.session?.authenticated) {
+				throw new Error('The connection, model or conversation changed. Review the target before sending.');
+			}
 			const body: CommonGeneration = { requestId: crypto.randomUUID(), expectedVersion: snapshot.version,
-				providerId, model, ...turn, settings, tools };
+				providerId, model, ...turn, settings, tools: { ...tools, ...(mcp.selections.length ? { mcp: mcp.selections } : {}) } };
 			const saved = draftMessagesStore.persistRequest(id, body, composer);
 			return await this.postExact(id, saved);
 		} finally {

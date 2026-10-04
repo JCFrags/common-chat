@@ -39,13 +39,13 @@ The two sidebar dots are separate. The first reports synchronization with Common
 
 Manual lists and cached results do not claim fresh API reachability. Visible online pages refresh the selected catalog about every 30 seconds. A listed model is not proof that inference or transcription will succeed.
 
-## Native tools and future connections
+## Native tools and MCP connections
 
 Available native tools are automatic on a configured function-tool connection. The paperclip offers Upload and Tools. Tools provides Files/code and current availability. See [tool policy and catalog](TOOLS.md). No host shell, host filesystem, arbitrary network, or external service becomes available through this menu.
 
 The native catalog derives from the server's function registry. Future tools can reuse its categories and availability metadata without another per-chat enable control. New authority categories still need their own server validation and isolation policy.
 
-The MCP entry point is inactive. Model Context Protocol (MCP) can connect an application to an external tool server. No connection, credential, subprocess, or remote tool is created now. A future implementation must keep external configuration separate from native tools, scope credentials server-side, expose actual availability, and preserve call validation, cancellation, receipt provenance, and user-approved trust boundaries. Do not treat a placeholder or a tool description as permission to connect.
+Model Context Protocol (MCP) connects Common to a separately reviewed HTTP tool server. Settings, Tools and the Common panel provide saved connections and page-only tool choices. Keys stay encrypted on the server. Saving a connection makes no remote request. Use Connect to initialize and discover its bounded catalog, then review and select tools. Each new submission requires confirmation of those exact tools and destinations. Disconnect, edit, catalog replacement, and sign-out clear selections. Saved activity is provenance, not permission for another turn. MCP does not launch subprocesses or replace the isolated runner. See [MCP limits and consent](MCP.md).
 
 ## Dictation
 

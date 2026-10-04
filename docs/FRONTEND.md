@@ -37,7 +37,7 @@ For local development with Vite, start the backend with `PUBLIC_URL=http://local
 - Provider credentials stay encrypted on the server. The upstream API-key setting is not a second credential store or authentication mechanism.
 - Advanced generation controls use explicit typed fields and declared provider capabilities. Custom JSON is not an unrestricted provider request override.
 - Thinking support comes from an explicit model/connection declaration or supported catalog metadata. Model names do not establish a protocol. Llama token budgets are separate from remote reasoning-effort levels.
-- Common files, execution, packages, dictation, and saved tool receipts use the existing [HTTP API](API.md). Native execution remains inside the separate rootless broker.
+- Common files, execution, packages, dictation, MCP connections, and saved tool receipts use the authenticated [HTTP API](API.md). Native execution remains inside the separate rootless broker. [HTTP MCP tools](MCP.md) require explicit Connect, reviewed page-only choices, and confirmation for each new submission. Exact retry does not obtain a new grant.
 - Upstream model load/download, host working directories, and browser MCP execution do not become trusted Common operations merely because their components were imported. Unsupported runtime actions must show their limitation rather than execute against an arbitrary endpoint.
 
 ## Browser policy

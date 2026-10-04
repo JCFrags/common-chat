@@ -99,10 +99,11 @@ export interface CommonSnapshot extends CommonConversation {
 }
 
 export interface CommonRuntime {
+	enabled: boolean;
 	ready: boolean;
 	packages: boolean;
 	blockedReasons?: string[];
-	nativeTools?: { name: string; title?: string; category: string; available: boolean }[];
+	nativeTools?: { name: string; title?: string; description?: string; category: string; available: boolean }[];
 	[key: string]: unknown;
 }
 
@@ -123,5 +124,6 @@ export interface CommonGeneration {
 	regenerate?: boolean;
 	continue?: boolean;
 	settings: CommonSettings;
-	tools: { workspace: boolean; execute: boolean; packages: boolean };
+	tools: { workspace: boolean; execute: boolean; packages: boolean;
+		mcp?: { connectionId: string; catalogRevision: string; tools: string[] }[] };
 }

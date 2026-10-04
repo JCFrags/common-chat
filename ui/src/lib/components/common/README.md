@@ -21,7 +21,7 @@ Callbacks:
 Optional props are `bind:open`, `showTrigger` (default `true`), and `initialSection` (default `files`). `bind:this` exposes:
 
 ```ts
-openSection(section: 'connections' | 'dictation' | 'files' | 'run'): void
+openSection(section: 'connections' | 'dictation' | 'tools' | 'files' | 'run'): void
 openFile(path: string, revision?: string): Promise<void>
 openExecution(id: string): Promise<void>
 openCode(source: string, kind?: 'python' | 'shell'): Promise<boolean>
@@ -39,6 +39,14 @@ setContext('common-run-code', (code: string, kind: 'python' | 'shell') => {
 ```
 
 `MarkdownContent.svelte` also accepts an explicit `onRunCode` prop. The prop takes precedence over this context. Completed Python and shell fences open the review editor only. Run remains an explicit panel action.
+
+## Mount tools and MCP
+
+`CommonTools.svelte` shows the native catalog and effective availability for the selected connection. Native tools remain automatic on compatible saved connections. It does not introduce per-turn native checkboxes.
+
+`CommonMcp.svelte` manages server-owned HTTP connections and page-only tool choices. Mount it in Settings, Tools, or the Common panel. Saving a connection does not connect it. Connect explicitly discovers a catalog. Edit, disconnect, catalog replacement, and sign-out clear its selections.
+
+The chat adapter calls `confirmSelections` from `$lib/services/common-mcp.svelte` before each new submission. The helper checks local catalog freshness without contacting an MCP server. The adapter confirms the fixed tool names and destinations, rechecks the provider/model/conversation target, and freezes `tools.mcp` into the exact request. Retry uses the stored whole request without reselection. Call `commonMcpState.reset()` on sign-out. Do not persist live choices separately or convert saved receipts into new grants. See [MCP.md](../../../../../docs/MCP.md) for transport and access limits.
 
 ## Mount dictation
 
@@ -88,6 +96,6 @@ Manual previews transfer reviewed HTML/SVG, CSS, JavaScript, or Mermaid through 
 
 Workspace previews display source as highlighted text rather than executing Markdown diagrams or active formats. Native raster/audio/video previews use bounded server bytes and local blob URLs. PDF/DOCX previews display extracted passages and citations, not full layout. Drafts are in-page only, not durable across reloads.
 
-Execution and package submission have no automatic retry. An uncertain response requires inspection of Recent runs, saved packages, and files before another explicit submission. Runtime readiness must report both enabled and ready. There is no host, browser, or MCP execution fallback.
+Execution and package submission have no automatic retry. An uncertain response requires inspection of Recent runs, saved packages, and files before another explicit submission. Runtime readiness must report both enabled and ready. Native code has no host, browser, or MCP execution fallback. HTTP MCP tools are separate reviewed destinations, not a substitute runner.
 
 Run `npm run check` and `npm run build` in `ui`. These checks do not establish mounted browser behavior. After integration, exercise the actual mounted components against synthetic fixtures, including revision conflict, delayed transcription cancellation/target change, unavailable runner, package failure, console paging, and opaque preview cleanup. Microphone permission, browser codecs, responsive layout, and server sandbox/CSP behavior need browser acceptance.
