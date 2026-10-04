@@ -1,6 +1,6 @@
 # Operations
 
-This guide describes the community 0.2 preview for a first deployment before stable release. Use Node.js 24 for the chat server. The minimum version is 22.16.0 with built-in `node:sqlite`. Shipped browser assets need no build for normal startup.
+This guide describes the community 0.2 preview for a first deployment before stable release. Use Node.js 24 for the chat server. The minimum runtime version is 22.16.0 with built-in `node:sqlite`. Release archives include built Svelte assets. A Git checkout needs the [frontend build](FRONTEND.md) before startup.
 
 The existing backend baseline contains 46 tests. Combined preview integration and deployment acceptance are still pending. The [original verification report](VERIFICATION.md) preserves earlier Node/browser results and their limitations; it is not new preview acceptance. See [release status and update procedures](RELEASES.md).
 
@@ -285,7 +285,7 @@ The sandbox loads the same pinned Mermaid Tiny bundle through the public `/sandb
 
 ### Rebuild browser assets
 
-Committed assets under `public/vendor` let the server run without npm install. Only contributors who change the renderer dependencies need this procedure:
+The Svelte interface uses the [frontend build procedure](FRONTEND.md). The retained sandbox renderer under `public/vendor` has a separate build. Use the following procedure only when you change those renderer dependencies:
 
 ```sh
 npm ci --ignore-scripts

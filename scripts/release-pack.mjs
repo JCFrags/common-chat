@@ -22,8 +22,15 @@ try {
   const archive = join(temporary, 'source.tar');
   execFileSync('git', ['archive', '--format=tar', '--prefix=common-chat/', '-o', archive, commit]);
   execFileSync('tar', ['-xf', archive, '-C', temporary]);
-  const release = { version, channel, commit, builtAt: new Date().toISOString() };
-  writeFileSync(join(temporary, 'common-chat', 'release.json'), `${JSON.stringify(release, null, 2)}\n`);
+  const source = join(temporary, 'common-chat');
+  // Build the archived commit, never copy ignored assets from the developer checkout.
+  execFileSync('npm', ['ci', '--ignore-scripts', '--no-audit', '--no-fund'], { cwd: join(source, 'ui'), stdio: 'inherit' });
+  execFileSync(process.execPath, ['scripts/build-ui.mjs'], { cwd: source, stdio: 'inherit', env: { ...process.env, COMMON_CHAT_COMMIT: commit } });
+  rmSync(join(source, 'ui/node_modules'), { recursive: true, force: true });
+  rmSync(join(source, 'ui/.svelte-kit'), { recursive: true, force: true });
+  const frontend = JSON.parse(readFileSync(join(source, 'ui/dist/frontend.json'), 'utf8'));
+  const release = { version, channel, commit, frontend, builtAt: new Date().toISOString() };
+  writeFileSync(join(source, 'release.json'), `${JSON.stringify(release, null, 2)}\n`);
   execFileSync('tar', ['--owner=0', '--group=0', '--numeric-owner', '--mode=u=rwX,go=rX', '-czf', target, '-C', temporary, 'common-chat']);
   const sha256 = createHash('sha256').update(readFileSync(target)).digest('hex');
   writeFileSync(`${target}.sha256`, `${sha256}  ${name}\n`, { flag: 'wx' });

@@ -4,7 +4,7 @@ A single-owner chat server with shared history, device-local drafts, conversatio
 
 This preview is for a first deployment and user feedback before a stable release. Integration and deployment acceptance for the new features are still in progress. See [release status and update procedures](docs/RELEASES.md).
 
-Common Chat uses Node.js and browser JavaScript, with theme tokens adapted from llama.cpp. It is not an extraction of the full upstream Svelte interface. See [source provenance](UPSTREAM.md).
+Common Chat uses the actual llama.cpp Svelte frontend with an independent Node.js server. Common adapters keep history, generation jobs, credentials, and native tools on the server. See [source provenance](UPSTREAM.md) and [frontend build and integration](docs/FRONTEND.md).
 
 ## What this version does
 
@@ -17,7 +17,7 @@ Common Chat uses Node.js and browser JavaScript, with theme tokens adapted from 
 | Drafts | Unsent composer text, attachment references, edit state, and unresolved submissions persist in this browser's localStorage. They do not sync between devices. See [drafts](docs/DRAFTS.md). |
 | Workspace | Each conversation has logical files, immutable revisions, restore, and keyword search with source citations. PDF/DOCX extraction requires the isolated runner. See [workspaces](docs/WORKSPACE.md). |
 | Native tools | The web interface automatically makes available scoped file tools, Python/shell execution, and registry packages usable on compatible connections. Execution needs a separately configured runner. API clients still supply per-submission permissions. See [tools](docs/TOOLS.md) and [runner setup](docs/RUNNER.md). |
-| Compact interface | A compact desktop sidebar, categorized Settings, model-specific thinking controls, separate app/model API indicators, and concise revision-bound file rows. MCP remains inactive. See [interface controls](docs/INTERFACE.md). |
+| Upstream interface | The llama.cpp Svelte sidebar, welcome screen, composer, message controls, and preferences, with Common connections, files, tools, dictation, and isolated artifacts. Runtime-only llama model management and MCP are not proxied to arbitrary providers. See [frontend integration](docs/FRONTEND.md). |
 | Dictation | Explicit recording or audio-file transcription adds editable, unsent text through a separately configured speech service. Recording requires HTTPS or localhost. See [dictation](docs/INTERFACE.md#dictation). |
 | Attachments | UTF-8 text and PNG, JPEG, WebP, or GIF images remain supported. Image requests require vision capability. Audio/video require inspection and the explicit `llama_cpp` input protocol. See [media](docs/MEDIA.md). |
 | Migration | The importer accepts llama.cpp legacy JSON, current JSONL, and ZIP archives of conversation exports. |
@@ -26,20 +26,27 @@ Common Chat uses Node.js and browser JavaScript, with theme tokens adapted from 
 
 ## Start locally
 
-Use Node.js 24. The minimum version is 22.16.0, with the built-in `node:sqlite` module. The core server has no npm runtime dependencies. Pinned browser assets ship in `public/vendor`, so startup does not require npm install or a build. Rebuilding these assets requires the build-only dependencies. See [operations](docs/OPERATIONS.md).
+Use Node.js 24. The minimum runtime version is 22.16.0, with the built-in `node:sqlite` module. The server has no npm runtime dependencies. Release archives include the built Svelte assets. A Git checkout needs a frontend build before startup. See [frontend build instructions](docs/FRONTEND.md) and [operations](docs/OPERATIONS.md).
 
 The optional runner is a separate installation. Starting Common Chat does not provision a container engine, install runner packages, or start a model server.
 
 1. Obtain the preview source or archive described in the [release guide](docs/RELEASES.md).
 2. Open a terminal in the `common-chat` directory.
-3. Start the server.
+3. If you use a Git checkout, build the frontend.
+
+```sh
+npm --prefix ui ci --ignore-scripts --no-audit --no-fund
+npm run build:ui
+```
+
+4. Start the server.
 
 ```sh
 npm start
 ```
 
-4. Open `http://localhost:3000` in a browser.
-5. Sign in with the initial owner password from the server terminal.
+5. Open `http://localhost:3000` in a browser.
+6. Sign in with the initial owner password from the server terminal.
 
 The server creates `./data` on first startup. Without `CHAT_PASSWORD`, it generates a random password. It prints that password only when it creates the account.
 
@@ -194,7 +201,8 @@ The sidebar returns up to 1,000 matching conversations. Conversation search can 
 
 ```text
 server/                 HTTP API, SQLite, generation, workspaces, tools, media
-public/                 Browser application, local drafts, workspaces, rendering
+ui/                     Actual upstream Svelte frontend and Common adapters
+public/                 Sandbox and retained browser support assets
 runner/                 Separate optional execution and inspection broker
 scripts/                Demo, health check, backup, restore, password reset
 tests/                 Unit, API, crash-recovery, and browser tests
@@ -203,4 +211,4 @@ docs/                   Operations, architecture, API, and verification
 licenses/               Original upstream license notice
 ```
 
-The original source uses the MIT license. The adapted theme retains the upstream notice. Provenance and reference URLs are in `UPSTREAM.md`.
+The original source uses the MIT license. The imported frontend retains the upstream MIT notice in `ui/LICENSE` and `licenses/llama.cpp.txt`. Provenance and reference URLs are in `UPSTREAM.md`.

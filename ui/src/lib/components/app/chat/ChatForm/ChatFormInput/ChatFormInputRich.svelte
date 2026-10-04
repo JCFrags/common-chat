@@ -199,6 +199,7 @@
 			.forEach((s) => s.remove());
 
 		const style = document.createElement('style');
+		style.nonce = document.querySelector<HTMLMetaElement>('meta[name="common-chat-csp-nonce"]')?.content ?? '';
 
 		style.setAttribute(UI_DATA_ATTRS.HIGHLIGHT_THEME_PREVIEW, BooleanString.TRUE);
 		style.textContent = isDark ? githubDarkCss : githubLightCss;

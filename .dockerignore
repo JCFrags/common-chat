@@ -7,6 +7,10 @@ restored-data
 backups
 backup-data
 node_modules
+**/node_modules
+ui/.svelte-kit
+ui/dist
+ui/storybook-static
 browser-artifacts
 ui-artifacts
 **/__pycache__

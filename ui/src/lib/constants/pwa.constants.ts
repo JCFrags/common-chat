@@ -53,7 +53,7 @@ export const APPLE_ASSETS = {
 
 export const PWA_MANIFEST = {
 	background_color: THEME_COLORS.BACKGROUND_LIGHT,
-	description: 'Local AI chat interface powered by llama.cpp',
+	description: 'Common Chat with server-owned history and configurable model connections',
 	display: 'standalone' as const,
 	icons: [
 		{ sizes: '64x64', src: 'pwa-64x64.png', type: 'image/png' },
@@ -332,30 +332,7 @@ export const SVELTEKIT_PWA_OPTIONS: SvelteKitPWAOptions = {
 		// handles non-API navigation to index.html for the SPA router.
 		navigateFallback: '',
 
-		// Runtime caching for API calls - use NetworkFirst so APIs are always fresh
-		runtimeCaching: [
-			{
-				handler: RUNTIME_CACHING.HANDLER,
-				options: {
-					cacheName: RUNTIME_CACHING.CACHE_NAME,
-					expiration: {
-						maxAgeSeconds: CACHE_SETTINGS.API_CACHE_MAX_AGE_SECONDS,
-						maxEntries: CACHE_SETTINGS.API_CACHE_MAX_ENTRIES
-					}
-				},
-				urlPattern: API_CACHING_PATTERNS.V1_API
-			},
-			{
-				handler: RUNTIME_CACHING.HANDLER,
-				options: {
-					cacheName: RUNTIME_CACHING.CACHE_NAME,
-					expiration: {
-						maxAgeSeconds: CACHE_SETTINGS.API_CACHE_MAX_AGE_SECONDS,
-						maxEntries: CACHE_SETTINGS.API_CACHE_MAX_ENTRIES
-					}
-				},
-				urlPattern: API_CACHING_PATTERNS.STATIC_API
-			}
-		]
+		// Authenticated server state must never fall back to cached API responses.
+		runtimeCaching: []
 	}
 };

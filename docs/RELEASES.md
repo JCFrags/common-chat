@@ -6,7 +6,7 @@ Updates do not run automatically inside the chat process. No updater has the aut
 
 ## Build an archive
 
-Use a clean checkout of an accepted commit on `main` with Node.js 24, Git, and GNU tar. The existing checks require no npm installation. Browser assets are already included.
+Use a clean checkout of an accepted commit on `main` with Node.js 24, npm, Git, and GNU tar. Install the pinned frontend build dependencies for the Svelte checks. The packager builds the archived commit and includes its assets. See [frontend build and integration](FRONTEND.md).
 
 An explicitly approved maintainer-only local preview can use a clean feature-branch commit before integration. Keep its exact commit identity and rollback assets. This does not authorize publication, `main` integration, or stable promotion. Complete any required user verification and merge approval before the normal publication workflow below.
 
@@ -16,7 +16,7 @@ npm test
 npm run release:pack -- 0.2.0-preview.1 preview dist
 ```
 
-The command packages tracked source only and normalizes archive ownership to numeric UID/GID 0 without local account names. Directories and executable files use mode `0755`; other files use `0644`, independent of the builder's umask. Private data is never part of this archive. It adds `release.json` with version, channel, full commit, and build time. It writes a `.tar.gz`, a SHA-256 file, and a JSON manifest. It refuses to overwrite the archive or package a dirty checkout. Do not put data, environment files, credentials, or logs in Git. Screen the actual outgoing archive and release text before publication.
+The command packages tracked source and the Svelte assets built from that exact archived commit. It excludes build dependencies and normalizes archive ownership to numeric UID/GID 0 without local account names. Directories and executable files use mode `0755`; other files use `0644`, independent of the builder's umask. Private data is never part of this archive. It adds `release.json` with version, channel, full commit, frontend manifest identity, and build time. It writes a `.tar.gz`, a SHA-256 file, and a JSON manifest. It refuses to overwrite the archive or package a dirty checkout. Do not put data, environment files, credentials, or logs in Git. Screen the actual outgoing archive and release text before publication.
 
 The authenticated `GET /api/session` response and Settings show the loaded release version, channel, and commit. A source checkout without the generated manifest reports `development`. `CHAT_UPDATE_CHANNEL=preview` or `stable` can override the policy label, but cannot change the manifest's source commit or install another release.
 

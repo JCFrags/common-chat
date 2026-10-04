@@ -1,6 +1,12 @@
-FROM node:22-bookworm-slim
+FROM node:24-bookworm-slim AS build
+WORKDIR /source
+COPY . .
+RUN npm --prefix ui ci --ignore-scripts --no-audit --no-fund && npm run build:ui
+RUN rm -rf ui/node_modules ui/.svelte-kit
+
+FROM node:24-bookworm-slim
 WORKDIR /app
-COPY --chown=node:node . .
+COPY --from=build --chown=node:node /source/ .
 RUN mkdir -p /app/data && chown node:node /app/data && chmod 700 /app/data
 USER node
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000 DATA_DIR=/app/data

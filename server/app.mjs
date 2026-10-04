@@ -17,6 +17,7 @@ import { Executions } from './executions.mjs';
 import { Tools } from './tools.mjs';
 import { Media } from './media.mjs';
 import { release } from './release.mjs';
+import { loadFrontend } from './frontend.mjs';
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), '../public');
 const assets = new Map([
@@ -44,6 +45,10 @@ const assets = new Map([
   ['/vendor/mermaid.js', ['vendor/mermaid.js', 'text/javascript; charset=utf-8']]
 ]);
 export async function createApp(options = {}) {
+  const serveFrontend = loadFrontend(options.frontendDir ?? join(publicDir, '../ui/dist'));
+  if (release.commit !== 'development' && serveFrontend.identity?.sourceCommit !== release.commit) {
+    throw new Error('The frontend build does not match this release. Install the complete release archive.');
+  }
   const store = new Store(options.dataDir ?? process.env.DATA_DIR ?? './data');
   const expectedOrigin = options.publicUrl ?? process.env.PUBLIC_URL ?? null;
   let publicUrl;
@@ -117,6 +122,7 @@ export async function createApp(options = {}) {
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.end(sandboxDocument()); return;
       }
+      if (method === 'GET' && serveFrontend?.(path, res)) return;
       if (method === 'GET' && assets.has(path)) {
         const [file, type] = assets.get(path);
         if (path === '/') res.setHeader('Permissions-Policy', 'camera=(), microphone=(self), geolocation=()');
@@ -134,7 +140,7 @@ export async function createApp(options = {}) {
       }
       const tokenHash = trustedLocal ? null : auth.require(req);
       if (path === '/api/session' && method === 'GET') {
-        send(res, { authenticated: true, authenticationRequired: !trustedLocal, account: 'owner', settings: JSON.parse(store.get('SELECT settings FROM account WHERE id=1').settings), version: release.version, release }); return;
+        send(res, { authenticated: true, authenticationRequired: !trustedLocal, account: 'owner', settings: JSON.parse(store.get('SELECT settings FROM account WHERE id=1').settings), version: release.version, release, frontend: serveFrontend.identity ?? null }); return;
       }
       if (path === '/api/logout' && method === 'POST') {
         if (trustedLocal) { send(res, { authenticated: true }); return; }

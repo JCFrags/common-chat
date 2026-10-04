@@ -26,7 +26,7 @@ const browserBaseConfig: any = {
 
 export default defineConfig(({ mode }) => {
 	const env = loadEnv(mode, process.cwd(), 'VITE_PUBLIC_');
-	const SERVER_ORIGIN = env.VITE_PUBLIC_SERVER_ORIGIN || 'http://localhost:8080';
+	const SERVER_ORIGIN = env.VITE_PUBLIC_SERVER_ORIGIN || 'http://localhost:3000';
 
 	return {
 		build: {
@@ -60,12 +60,8 @@ export default defineConfig(({ mode }) => {
 				'Cross-Origin-Opener-Policy': 'same-origin'
 			},
 			proxy: {
-				'/cors-proxy': SERVER_ORIGIN,
-				'/models': SERVER_ORIGIN,
-				'/props': SERVER_ORIGIN,
-				'/slots': SERVER_ORIGIN,
-				'/tools': SERVER_ORIGIN,
-				'/v1': SERVER_ORIGIN
+				'/api': { target: SERVER_ORIGIN, changeOrigin: false },
+				'/sandbox': { target: SERVER_ORIGIN, changeOrigin: false }
 			}
 		},
 
