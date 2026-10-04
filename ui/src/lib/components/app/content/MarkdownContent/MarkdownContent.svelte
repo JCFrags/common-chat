@@ -7,12 +7,9 @@
 		getMdastNodeHash,
 		isAppendMode
 	} from './markdown-utils';
-	import {
-		ActionIconCopyToClipboard,
-		CodeBlockActions,
-		DialogCodePreview,
-		DialogMermaidPreview
-	} from '$lib/components/app';
+	import { ActionIconCopyToClipboard, CodeBlockActions } from '$lib/components/app';
+	import CommonArtifactPreview from '$lib/components/common/CommonArtifactPreview.svelte';
+	import { createSandboxSession, payloadForSource } from '$lib/components/common/sandbox';
 	import {
 		CODE_BLOCK_CLASS,
 		DIAGRAM_VIEW_MODE_ATTR,
@@ -22,7 +19,6 @@
 		MARKDOWN_DATA_ATTRS,
 		MERMAID_BLOCK_CLASS,
 		MERMAID_LANGUAGE,
-		MERMAID_RENDERED_ATTR,
 		MERMAID_SYNTAX_ATTR,
 		MERMAID_WRAPPER_CLASS,
 		SETTINGS_KEYS,
@@ -43,13 +39,12 @@
 	} from '$lib/utils';
 	import { detectIncompleteCodeBlock, highlightCode, type IncompleteCodeBlock } from '$lib/utils';
 	import { sanitizeSvg } from '$lib/utils/sanitize-svg';
-	import { mountSvgShadow } from '$lib/utils/svg-shadow';
 	import type { Root as HastRoot, RootContent as HastRootContent } from 'hast';
 	import githubLightCss from 'highlight.js/styles/github.css?inline';
 	import githubDarkCss from 'highlight.js/styles/github-dark.css?inline';
 	import type { Root as MdastRoot } from 'mdast';
 	import { mode } from 'mode-watcher';
-	import { onDestroy, tick } from 'svelte';
+	import { getContext, onDestroy, tick } from 'svelte';
 	import { SvelteMap } from 'svelte/reactivity';
 
 	interface Props {
@@ -57,6 +52,7 @@
 		content: string;
 		class?: string;
 		disableMath?: boolean;
+		onRunCode?: (code: string, kind: 'python' | 'shell') => void;
 	}
 
 	interface MarkdownBlock {
@@ -65,25 +61,19 @@
 		contentHash?: string;
 	}
 
-	let { attachments, class: className = '', content, disableMath = false }: Props = $props();
+	const contextRunCode = getContext<Props['onRunCode']>('common-run-code');
+	let {
+		attachments,
+		class: className = '',
+		content,
+		disableMath = false,
+		onRunCode = contextRunCode
+	}: Props = $props();
 
 	let containerRef = $state<HTMLDivElement>();
 	let renderedBlocks = $state<MarkdownBlock[]>([]);
 	let unstableBlockHtml = $state('');
 	let incompleteCodeBlock = $state<IncompleteCodeBlock | null>(null);
-	const streamingSvgCode = $derived.by(() => {
-		const block = incompleteCodeBlock;
-
-		if (!block) return null;
-
-		if (block.language === SVG.LANGUAGE) return block.code;
-
-		if (block.language === SVG.XML_LANGUAGE && block.code.trimStart().startsWith(SVG.TAG_PREFIX))
-			return block.code;
-
-		return null;
-	});
-	const liveSvgHtml = $derived(streamingSvgCode !== null ? sanitizeSvg(streamingSvgCode) : '');
 
 	// Derived rather than called inline in the template so it only recomputes when
 	// the block actually changes. Auto-detection is disabled while streaming: it
@@ -96,20 +86,8 @@
 	let previewDialogOpen = $state(false);
 	let previewCode = $state('');
 	let previewLanguage = $state('text');
-	let mermaidPreviewOpen = $state(false);
-	let mermaidPreviewSvgHtml = $state('');
-	let svgPreviewLive = $state(false);
-	let streamingSvgHost = $state<HTMLDivElement | null>(null);
-
-	// While the zoom dialog is open on a streaming svg, mirror the live render into it
-	$effect(() => {
-		if (svgPreviewLive && liveSvgHtml) mermaidPreviewSvgHtml = liveSvgHtml;
-	});
-
-	// Mount the streaming svg into its shadow host on every chunk so it renders live
-	$effect(() => {
-		if (streamingSvgHost) mountSvgShadow(streamingSvgHost, liveSvgHtml, SVG.INLINE_SHADOW_STYLE);
-	});
+	let previewBlocks = $state<{ code: string; language: string }[]>([]);
+	const diagramSessions = new Map<HTMLElement, ReturnType<typeof createSandboxSession>>();
 
 	let streamingCodeScrollContainer = $state<HTMLDivElement>();
 
@@ -158,6 +136,8 @@
 
 		const style = document.createElement('style');
 
+		style.nonce =
+			document.querySelector<HTMLMetaElement>('meta[name="common-chat-csp-nonce"]')?.content ?? '';
 		style.setAttribute(UI_DATA_ATTRS.HIGHLIGHT_THEME_PREVIEW, BooleanString.TRUE);
 		style.textContent = isDark ? githubDarkCss : githubLightCss;
 
@@ -261,8 +241,33 @@
 			return;
 		}
 
-		previewCode = info.rawCode;
-		previewLanguage = info.language;
+		openIsolatedPreview(info.rawCode, info.language);
+	}
+
+	function openIsolatedPreview(code: string, language: string) {
+		previewCode = code;
+		previewLanguage = language;
+		previewBlocks = Array.from(
+			containerRef?.querySelectorAll<HTMLElement>(
+				'.code-block-wrapper:not(.streaming-code-block), .mermaid-block-wrapper:not(.streaming-mermaid-block), .svg-block-wrapper:not(.streaming-svg-block)'
+			) ?? []
+		).flatMap((wrapper) => {
+			const node = wrapper.querySelector<HTMLElement>(
+				`[${MERMAID_SYNTAX_ATTR}], [${SVG.SOURCE_ATTR}], code[${MARKDOWN_DATA_ATTRS.CODE_ID}]`
+			);
+			const source =
+				node?.getAttribute(MERMAID_SYNTAX_ATTR) ??
+				node?.getAttribute(SVG.SOURCE_ATTR) ??
+				node?.textContent;
+			return typeof source === 'string'
+				? [
+						{
+							code: source,
+							language: wrapper.querySelector('.code-language')?.textContent?.trim() || 'text'
+						}
+					]
+				: [];
+		});
 		previewDialogOpen = true;
 	}
 
@@ -430,6 +435,46 @@
 				previewButton.setAttribute(MARKDOWN_DATA_ATTRS.LISTENER_BOUND, BooleanString.TRUE);
 				previewButton.addEventListener('click', handlePreviewClick);
 			}
+
+			const language =
+				wrapper.querySelector('.code-language')?.textContent?.trim().toLowerCase() ?? '';
+			const actions = wrapper.querySelector<HTMLElement>(`.${CODE_BLOCK_CLASS.ACTIONS}`);
+			if (
+				actions &&
+				!previewButton &&
+				['css', 'js', 'javascript', 'mjs', 'cjs', 'htm', 'xml'].includes(language)
+			) {
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.className = 'preview-code-btn text-xs';
+				button.textContent = 'Preview / Run';
+				button.title = 'Review source in an isolated browser frame. External resources start off.';
+				button.setAttribute(MARKDOWN_DATA_ATTRS.LISTENER_BOUND, BooleanString.TRUE);
+				button.addEventListener('click', handlePreviewClick);
+				actions.append(button);
+			}
+			if (
+				onRunCode &&
+				actions &&
+				['python', 'py', 'bash', 'sh', 'shell'].includes(language) &&
+				!actions.querySelector('.common-run-code-btn')
+			) {
+				const button = document.createElement('button');
+				button.type = 'button';
+				button.className = 'common-run-code-btn text-xs px-2 py-1 rounded-md hover:bg-muted';
+				button.textContent =
+					language === 'python' || language === 'py'
+						? 'Review in isolated Python'
+						: 'Review in isolated shell';
+				button.title =
+					'Open the code editor for review. This does not run code or grant package access.';
+				button.addEventListener('click', () => {
+					const info = getCodeInfoFromTarget(button);
+					if (info)
+						onRunCode?.(info.rawCode, ['python', 'py'].includes(language) ? 'python' : 'shell');
+				});
+				actions.append(button);
+			}
 		}
 	}
 
@@ -448,244 +493,107 @@
 		}
 	}
 
-	/**
-	 * Opens the mermaid diagram in a full-screen preview dialog with zoom/pan support.
-	 * Also handles copy and preview button clicks for mermaid blocks.
-	 * Uses event delegation: a single handler on the container.
-	 */
+	// Diagram source stays escaped in the upstream source view. Rendering occurs
+	// only inside /sandbox, including automatic completed Mermaid and SVG blocks.
 	async function handleMermaidClick(event: MouseEvent) {
 		const target = event.target as HTMLElement;
-		// Toggle a diagram block between its rendered view and its source view.
-		// Shared by mermaid and svg, css drives the visibility from the wrapper mode.
-		const toggleBtn = target.closest(`.${TOGGLE_SOURCE_BTN_CLASS}`);
-
-		if (toggleBtn) {
+		const wrapper = target.closest<HTMLElement>(`.${MERMAID_WRAPPER_CLASS}, .${SVG.WRAPPER_CLASS}`);
+		if (!wrapper) return;
+		const node = wrapper.querySelector<HTMLElement>(
+			`pre.${MERMAID_BLOCK_CLASS}, pre.${SVG.BLOCK_CLASS}`
+		);
+		if (!node) return;
+		const toggle = target.closest(`.${TOGGLE_SOURCE_BTN_CLASS}`);
+		if (toggle) {
 			event.preventDefault();
 			event.stopPropagation();
-
-			const wrapper = toggleBtn.closest(`.${MERMAID_WRAPPER_CLASS}, .${SVG.WRAPPER_CLASS}`);
-
-			if (!wrapper) return;
-
-			const isSource = wrapper.getAttribute(DIAGRAM_VIEW_MODE_ATTR) === DIAGRAM_VIEW_SOURCE;
-			const next = isSource ? DIAGRAM_VIEW_RENDERED : DIAGRAM_VIEW_SOURCE;
-
-			wrapper.setAttribute(DIAGRAM_VIEW_MODE_ATTR, next);
-			toggleBtn.setAttribute('aria-pressed', String(!isSource));
-
+			const source = wrapper.getAttribute(DIAGRAM_VIEW_MODE_ATTR) !== DIAGRAM_VIEW_SOURCE;
+			wrapper.setAttribute(
+				DIAGRAM_VIEW_MODE_ATTR,
+				source ? DIAGRAM_VIEW_SOURCE : DIAGRAM_VIEW_RENDERED
+			);
+			toggle.setAttribute('aria-pressed', String(source));
+			if (source) {
+				diagramSessions.get(node)?.close();
+				diagramSessions.delete(node);
+			} else renderIsolatedDiagrams();
 			return;
 		}
-
-		// Check if clicking on copy or preview button in mermaid block
-		const copyBtn = target.closest(`.${MERMAID_WRAPPER_CLASS} .copy-code-btn`);
-		const previewBtn = target.closest(`.${MERMAID_WRAPPER_CLASS} .preview-code-btn`);
-
-		if (copyBtn || previewBtn) {
-			const wrapper = target.closest(`.${MERMAID_WRAPPER_CLASS}`);
-
-			if (!wrapper) return;
-
-			const preElement = wrapper.querySelector<HTMLElement>(
-				`pre.${MERMAID_BLOCK_CLASS}[${MERMAID_SYNTAX_ATTR}]`
-			);
-
-			if (!preElement) return;
-
-			const mermaidSyntax = preElement.getAttribute(MERMAID_SYNTAX_ATTR) ?? '';
-
-			if (copyBtn) {
-				event.preventDefault();
-				event.stopPropagation();
-				try {
-					await copyToClipboard(mermaidSyntax);
-				} catch (error) {
-					console.error('Failed to copy mermaid syntax:', error);
-				}
-
-				return;
+		const source =
+			node.getAttribute(MERMAID_SYNTAX_ATTR) ?? node.getAttribute(SVG.SOURCE_ATTR) ?? '';
+		if (target.closest('.copy-code-btn')) {
+			event.preventDefault();
+			event.stopPropagation();
+			try {
+				await copyToClipboard(source);
+			} catch (error) {
+				console.error('Failed to copy diagram source:', error);
 			}
-
-			if (previewBtn) {
-				event.preventDefault();
-				event.stopPropagation();
-				const svg = preElement.querySelector('svg');
-
-				if (!svg) return;
-
-				mermaidPreviewSvgHtml = svg.outerHTML;
-				svgPreviewLive = false;
-				mermaidPreviewOpen = true;
-
-				return;
-			}
-		}
-
-		// Check if clicking on copy or preview button in svg block
-		const svgCopyBtn = target.closest(`.${SVG.WRAPPER_CLASS} .copy-code-btn`);
-		const svgPreviewBtn = target.closest(`.${SVG.WRAPPER_CLASS} .preview-code-btn`);
-
-		if (svgCopyBtn || svgPreviewBtn) {
-			const wrapper = target.closest(`.${SVG.WRAPPER_CLASS}`);
-
-			if (!wrapper) return;
-
-			const preElement = wrapper.querySelector<HTMLElement>(
-				`pre.${SVG.BLOCK_CLASS}[${SVG.SOURCE_ATTR}]`
-			);
-
-			if (!preElement) return;
-
-			if (svgCopyBtn) {
-				event.preventDefault();
-				event.stopPropagation();
-				try {
-					await copyToClipboard(preElement.getAttribute(SVG.SOURCE_ATTR) ?? '');
-				} catch (error) {
-					console.error('Failed to copy svg source:', error);
-				}
-
-				return;
-			}
-
-			if (svgPreviewBtn) {
-				event.preventDefault();
-				event.stopPropagation();
-				mermaidPreviewSvgHtml = sanitizeSvg(preElement.getAttribute(SVG.SOURCE_ATTR) ?? '');
-				svgPreviewLive = false;
-				mermaidPreviewOpen = true;
-
-				return;
-			}
-		}
-
-		// A click on the header chrome targets the action buttons, never the
-		// diagram. Guard so a header click can not fall through to the click to
-		// zoom branches below, whatever the scroll position or stacking.
-		if (target.closest(`.${CODE_BLOCK_CLASS.HEADER}`)) return;
-
-		// Open preview when clicking the svg block itself. A final block carries its
-		// source, a streaming block does not and is mirrored live into the dialog.
-		const svgEl = target.closest(`.${SVG.BLOCK_CLASS}`);
-
-		if (svgEl) {
-			const source = svgEl.getAttribute(SVG.SOURCE_ATTR);
-
-			if (source !== null) {
-				mermaidPreviewSvgHtml = sanitizeSvg(source);
-				svgPreviewLive = false;
-			} else {
-				svgPreviewLive = true;
-			}
-
-			mermaidPreviewOpen = true;
-
-			return;
-		}
-
-		// Otherwise, open preview when clicking on the mermaid diagram itself
-		const mermaidEl = target.closest(`.${MERMAID_BLOCK_CLASS}`);
-
-		if (!mermaidEl) return;
-
-		const svg = mermaidEl.querySelector('svg');
-
-		if (!svg) return;
-
-		mermaidPreviewSvgHtml = svg.outerHTML;
-		svgPreviewLive = false;
-		mermaidPreviewOpen = true;
-	}
-
-	/**
-	 * Handles mermaid preview dialog open state changes.
-	 * Cleans up SVG content when dialog is closed.
-	 */
-	function handleMermaidPreviewOpenChange(open: boolean) {
-		mermaidPreviewOpen = open;
-
-		if (!open) {
-			mermaidPreviewSvgHtml = '';
-			svgPreviewLive = false;
+		} else if (target.closest('.preview-code-btn')) {
+			event.preventDefault();
+			event.stopPropagation();
+			openIsolatedPreview(source, node.hasAttribute(MERMAID_SYNTAX_ATTR) ? 'mermaid' : 'svg');
 		}
 	}
 
-	/**
-	 * Renders mermaid diagrams that haven't been rendered yet.
-	 * Called after each markdown content update.
-	 * Marks nodes immediately to prevent duplicate renders during streaming.
-	 * Reads mode.current before await to ensure reactive tracking.
-	 */
-	async function renderMermaidDiagrams() {
+	function renderIsolatedDiagrams() {
+		for (const [node, session] of diagramSessions)
+			if (!node.isConnected) {
+				session.close();
+				diagramSessions.delete(node);
+			}
 		if (!containerRef) return;
-
-		const nodes = containerRef.querySelectorAll(
-			`pre.${MERMAID_BLOCK_CLASS}:not([${MERMAID_RENDERED_ATTR}])`
-		);
-
-		if (nodes.length === 0) return;
-
-		// Mark nodes immediately to prevent duplicate renders if called again during streaming.
-		// This avoids needing a guard that would block node discovery.
-		nodes.forEach((node) => node.setAttribute(MERMAID_RENDERED_ATTR, BooleanString.TRUE));
-
-		// Read mode before await so Svelte tracks it reactively.
-		const isDark = mode.current === ColorMode.DARK;
-		// lazy load the mermaid dependecy only when needed to reduce bundle size.
-		const { default: mermaid } = await import('mermaid');
-
-		mermaid.initialize({
-			flowchart: {
-				htmlLabels: true,
-				useMaxWidth: false
-			},
-			gantt: {
-				useMaxWidth: false
-			},
-			securityLevel: 'strict',
-			sequence: {
-				useMaxWidth: false
-			},
-			startOnLoad: false,
-			theme: isDark ? 'dark' : 'default'
-		});
-
-		try {
-			await mermaid.run({
-				nodes: Array.from(nodes) as unknown as NodeListOf<HTMLElement>
-			});
-		} catch (error) {
-			console.error('Failed to render mermaid diagram:', error);
-		}
-	}
-
-	/**
-	 * Renders svg diagrams that haven't been rendered yet.
-	 * Sanitizes the source before injecting and marks each node so it renders once.
-	 * An empty sanitize result keeps the raw source as escaped text.
-	 */
-	function renderSvgDiagrams() {
-		if (!containerRef) return;
-
 		const nodes = containerRef.querySelectorAll<HTMLElement>(
-			`pre.${SVG.BLOCK_CLASS}:not([${SVG.RENDERED_ATTR}])`
+			`pre.${MERMAID_BLOCK_CLASS}, pre.${SVG.BLOCK_CLASS}`
 		);
-
-		if (nodes.length === 0) return;
-
-		nodes.forEach((node) => {
-			node.setAttribute(SVG.RENDERED_ATTR, BooleanString.TRUE);
-
-			const source = node.getAttribute(SVG.SOURCE_ATTR) ?? node.textContent ?? '';
-			const clean = sanitizeSvg(source);
-
-			if (clean) {
-				node.textContent = '';
-				const host = document.createElement('div');
-
-				node.appendChild(host);
-				mountSvgShadow(host, clean, SVG.INLINE_SHADOW_STYLE);
+		for (const node of nodes) {
+			const wrapper = node.closest<HTMLElement>(`.${MERMAID_WRAPPER_CLASS}, .${SVG.WRAPPER_CLASS}`);
+			if (
+				!wrapper ||
+				wrapper.getAttribute(DIAGRAM_VIEW_MODE_ATTR) === DIAGRAM_VIEW_SOURCE ||
+				diagramSessions.has(node)
+			)
+				continue;
+			const mermaid = node.hasAttribute(MERMAID_SYNTAX_ATTR);
+			node.setAttribute('data-common-isolated', 'true');
+			if (!mermaid) node.setAttribute(SVG.RENDERED_ATTR, BooleanString.TRUE);
+			const raw = node.getAttribute(mermaid ? MERMAID_SYNTAX_ATTR : SVG.SOURCE_ATTR) ?? '';
+			// SVG is sanitized even for the opaque automatic frame. Raw source can
+			// be reviewed and run manually in a separate network-off sandbox.
+			const source = mermaid ? raw : sanitizeSvg(raw);
+			if (!source) continue;
+			let consoleNode = wrapper.querySelector<HTMLPreElement>('.common-diagram-console');
+			if (!consoleNode) {
+				const details = document.createElement('details'),
+					summary = document.createElement('summary');
+				summary.textContent = 'Isolated diagram console';
+				details.append(summary);
+				consoleNode = document.createElement('pre');
+				consoleNode.className =
+					'common-diagram-console text-xs whitespace-pre-wrap max-h-48 overflow-auto';
+				details.append(consoleNode);
+				wrapper.append(details);
 			}
-		});
+			consoleNode.textContent = '';
+			try {
+				node.textContent = '';
+				node.style.whiteSpace = 'normal';
+				const logs = consoleNode;
+				diagramSessions.set(
+					node,
+					createSandboxSession(node, payloadForSource(source, mermaid ? 'mermaid' : 'svg'), {
+						automatic: true,
+						onLog: (line, level) => {
+							logs.append(document.createTextNode(line));
+							if (level === 'error') logs.closest('details')?.setAttribute('open', '');
+						}
+					})
+				);
+			} catch (error) {
+				consoleNode.textContent =
+					error instanceof Error ? error.message : 'The isolated diagram could not start.';
+			}
+		}
 	}
 
 	/**
@@ -749,7 +657,14 @@
 		} catch (error) {
 			console.error('Failed to process markdown:', error);
 			renderedBlocks = [];
-			unstableBlockHtml = markdown.replace(/\n/g, '<br>');
+			unstableBlockHtml = markdown
+				.replace(
+					/[&<>"']/g,
+					(character) =>
+						({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character] ??
+						character
+				)
+				.replace(/\n/g, '<br>');
 		} finally {
 			isProcessing = false;
 		}
@@ -773,9 +688,8 @@
 		if ((hasRenderedBlocks || hasUnstableBlock) && containerRef) {
 			setupCodeBlockActions();
 			setupImageErrorHandlers();
-			renderMermaidDiagrams();
-			renderSvgDiagrams();
 		}
+		renderIsolatedDiagrams();
 	});
 
 	// Auto-scroll for streaming code block
@@ -789,6 +703,8 @@
 
 	onDestroy(() => {
 		cleanupEventListeners();
+		for (const session of diagramSessions.values()) session.close();
+		diagramSessions.clear();
 		streamingAutoScroll.destroy();
 	});
 </script>
@@ -837,32 +753,6 @@
 					<span class="mermaid-loading-text">Generating diagram...</span>
 				</div>
 			</div>
-		{:else if streamingSvgCode !== null}
-			<div class="svg-block-wrapper streaming-svg-block">
-				<div class="code-block-header">
-					<span class="code-language">svg</span>
-
-					<div class="code-block-actions">
-						<ActionIconCopyToClipboard
-							ariaLabel="Diagram incomplete"
-							canCopy={false}
-							text={incompleteCodeBlock.code}
-						/>
-					</div>
-				</div>
-
-				{#if liveSvgHtml}
-					<div class="svg-scroll-container">
-						<div class={SVG.BLOCK_CLASS}>
-							<div bind:this={streamingSvgHost}></div>
-						</div>
-					</div>
-				{:else}
-					<div class="mermaid-loading-placeholder">
-						<span class="mermaid-loading-text">Rendering svg...</span>
-					</div>
-				{/if}
-			</div>
 		{:else}
 			<div class="code-block-wrapper streaming-code-block relative">
 				<div class="code-block-header">
@@ -895,19 +785,20 @@
 	{/if}
 </div>
 
-<DialogCodePreview
+<CommonArtifactPreview
+	blocks={previewBlocks}
 	code={previewCode}
 	language={previewLanguage}
 	onOpenChange={handlePreviewDialogOpenChange}
-	open={previewDialogOpen}
-/>
-
-<DialogMermaidPreview
-	onOpenChange={handleMermaidPreviewOpenChange}
-	open={mermaidPreviewOpen}
-	svgHtml={mermaidPreviewSvgHtml}
+	bind:open={previewDialogOpen}
 />
 
 <style>
 	@import './markdown-content.css';
+
+	/* Upstream diagram CSS expects an inline SVG. The Common renderer uses a frame. */
+	.markdown-content :global(pre.mermaid[data-common-isolated]) {
+		display: block;
+		width: 100%;
+	}
 </style>
