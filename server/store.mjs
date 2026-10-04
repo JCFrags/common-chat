@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync, chmodSy
 import { join, resolve } from 'node:path';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
 import { id, now, fail, hash, modelConfig as validateModelConfig, conversationUi, savedConversationUi } from './validation.mjs';
+import { mcpSelections } from './mcp.mjs';
 
 const parse = (s, fallback = {}) => s ? JSON.parse(s) : fallback;
 const record = value => value && typeof value === 'object' && !Array.isArray(value);
@@ -123,6 +124,11 @@ export class Store {
         if (row.role === 'assistant' && !archivedToolContext && toolPermissions && typeof toolPermissions === 'object' && !Array.isArray(toolPermissions) &&
             this.get('SELECT id FROM jobs WHERE message_id=? AND conversation_id=?', row.id, row.conversation_id)) {
           visible.toolPermissions = Object.fromEntries(['workspace', 'execute', 'packages'].map(key => [key, toolPermissions[key] === true]));
+          // The exact MCP selection is read-only provenance, never a new-turn grant.
+          try {
+            const selections = mcpSelections(toolPermissions.mcp);
+            if (selections.length) visible.toolPermissions.mcp = selections;
+          } catch {}
         }
         return visible;
       })(),

@@ -1,5 +1,6 @@
 import { fail, hash, object, text, integer } from './validation.mjs';
 import { executionCode, packageSpecs, fileLink } from './executions.mjs';
+import { mcpSelections } from './mcp.mjs';
 
 export const TOOL_LIMITS = Object.freeze({ argumentBytes: 128 * 1024,
   totalArgumentBytes: 256 * 1024, resultBytes: 64 * 1024, transcriptBytes: 1024 * 1024 });
@@ -8,12 +9,14 @@ const own = (value, keys, label) => {
   if (Object.keys(value).some(key => !keys.includes(key))) fail(400, `Unknown ${label} field.`);
 };
 export function toolPermissions(value = {}) {
-  own(value, ['workspace', 'execute', 'packages'], 'tool permissions');
+  own(value, ['workspace', 'execute', 'packages', 'mcp'], 'tool permissions');
   const permissions = {};
   for (const key of ['workspace', 'execute', 'packages']) {
     if (value[key] !== undefined && typeof value[key] !== 'boolean') fail(400, `Tool permission ${key} must be a boolean.`);
     permissions[key] = value[key] === true;
   }
+  const mcp = mcpSelections(value.mcp);
+  if (mcp.length) permissions.mcp = mcp;
   return Object.freeze(permissions);
 }
 // A portable subset is checked before dispatch. Workspace applies its full path policy again.
@@ -126,8 +129,19 @@ export function toolTranscript(value) {
 }
 
 export class Tools {
-  constructor(workspace, executions) { this.workspace = workspace; this.executions = executions; }
+  constructor(workspace, executions, mcp) { this.workspace = workspace; this.executions = executions; this.mcp = mcp; }
   assertIdle(cid) { this.executions?.assertIdle(cid); }
+  prepareMcp(permissions) {
+    if (!permissions.mcp?.length) return [];
+    if (!this.mcp) fail(503, 'MCP tools are not configured.');
+    return this.mcp.prepare(permissions.mcp);
+  }
+  assertPrepared(plan = []) { if (plan.length) this.mcp.assertPlan(plan); }
+  activity(call, plan = []) {
+    const item = plan.find(item => item.tool.modelName === call.function.name);
+    return item ? { source: 'mcp', connectionId: item.connectionId, connectionName: item.connectionName,
+      toolName: item.tool.name, catalogRevision: item.catalogRevision } : {};
+  }
   catalog(runtime = {}) {
     const titles = { list_workspace: 'List files', read_workspace: 'Read files', write_workspace: 'Write files', search_workspace: 'Search files', run_python: 'Python', run_shell: 'Shell', install_packages: 'Registry packages' };
     return schemas.map(([category, definition]) => ({ source: 'native', category,
@@ -135,7 +149,7 @@ export class Tools {
       description: definition.function.description,
       available: category === 'workspace' ? !!this.workspace : !!this.executions && runtime.ready === true && (category !== 'packages' || runtime.packages === true) }));
   }
-  async prepare(permissions, { signal } = {}) {
+  async prepare(permissions, { signal, mcpPlan = [] } = {}) {
     if (permissions.workspace && !this.workspace) fail(503, 'Conversation workspaces are not configured.');
     let inventory = null;
     if (permissions.execute || permissions.packages) {
@@ -146,15 +160,20 @@ export class Tools {
       if (permissions.packages && !runtime.packages) fail(503, 'Package installation is not available in the isolated runner.');
     }
     signal?.throwIfAborted();
-    return schemas.filter(([permission]) => permissions[permission]).map(([, definition]) => {
+    const native = schemas.filter(([permission]) => permissions[permission]).map(([, definition]) => {
       const copy = structuredClone(definition);
       if (['run_python', 'run_shell', 'install_packages'].includes(copy.function.name)) {
         copy.function.description += inventory ? ` Verified bundled Python ${inventory.pythonVersion}: ${inventory.python.map(item => `${item.name}==${item.version}`).join(', ')}. Node ${inventory.nodeVersion}. Compatible bundled packages need no install. Additional wheels must fit 32 MiB and 4096 regular files.` : ' Bundled inventory is unavailable. Do not guess package versions. Inspect actual execution results.';
       }
       return copy;
     });
+    return [...native, ...(mcpPlan.length ? this.mcp.definitions(mcpPlan) : [])];
   }
-  validate(call, permissions) {
+  validate(call, permissions, mcpPlan = []) {
+    if (call.function.name.startsWith('mcp_')) {
+      if (!permissions.mcp?.length || !this.mcp) fail(403, 'This submission does not permit MCP tools.');
+      return this.mcp.validate(call, mcpPlan);
+    }
     const name = call.function.name, definition = schemas.find(([, s]) => s.function.name === name);
     if (!definition || !permissions[definition[0]]) fail(403, 'The model requested a tool that this request does not permit.');
     let args;
@@ -180,8 +199,9 @@ export class Tools {
     if (name === 'install_packages') args = packageSpecs(args);
     return { call, args };
   }
-  async run({ cid, jobId, permissions, signal }, { call, args }) {
+  async run({ cid, jobId, permissions, signal }, { call, args, mcp }) {
     signal.throwIfAborted();
+    if (mcp) return this.mcp.run(mcp, args, signal);
     let result, summary, files = [], executionId;
     switch (call.function.name) {
       case 'list_workspace': {

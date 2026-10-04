@@ -19,10 +19,11 @@ For API clients, omitted permissions remain false. Permissions apply only to tha
 - `workspace` permits file listing, bounded reading, text replacement, and search in the current conversation workspace.
 - `execute` permits Python and POSIX shell in the separately configured isolated runner. An execution receives a copied snapshot of the current conversation workspace and can produce file revisions. It therefore permits workspace access through code even if direct workspace tools are off.
 - `packages` permits registry package installation and restoration of saved conversation dependencies. A code execution with saved package specifications requires this permission because the runner can fetch dependencies again.
+- Optional `mcp` is a bounded array of `{connectionId, catalogRevision, tools: [remoteNames]}` for exact reviewed external tools. Omitted or empty arrays permit none. The server resolves fixed targets and encrypted keys from its active catalog. Each new web submission needs separate confirmation. It is not a native-tool toggle.
 
 No model argument can choose a conversation ID, host path, image, engine flag, host environment, network policy, or permission. The app supplies the conversation ID. The runner supplies the execution policy. Code fences remain display content. They never trigger these tools.
 
-Settings, Tools lists the native catalog and current availability without enable checkboxes. Paperclip, Tools opens file/code operations or this availability page. Manual code review, Run, and manual package consent remain separate. External MCP connections are not configured or executed by this policy.
+Settings, Tools lists the native catalog and current availability without enable checkboxes. Paperclip, Tools opens file/code operations or this availability page. Manual code review, Run, and manual package consent remain separate. External MCP connections are not configured or executed by this native policy. [MCP.md](MCP.md) defines separate explicit HTTP connections and manual exact per-submission grants. MCP does not disable automatic native availability.
 
 `nativeTools` derives from the same server registry as the function definitions. Each entry contains `source: "native"`, `category`, `name`, `title`, `description`, and runtime `available`. The selected provider must also support function tools. Adding a native definition within an existing bounded category updates both the catalog and protocol list. A new authority category or an external tool needs an explicit integration, not a host-execution fallback. See [interface and capability controls](INTERFACE.md).
 
@@ -77,7 +78,7 @@ Assistant metadata adds:
 
 - `toolActivity`: call ID, tool name, state, a short summary, revision-specific download links, and bounded stdout/stderr summaries for code execution. Execution activity also includes `executionId`, optional runner `operationId`, exit code, and safe error text.
 - `toolTranscript`: bounded assistant/tool protocol messages for later model context. These are historical messages, not an execution queue. Normal message responses hide this field.
-- `toolPermissions`: the permissions granted to this submission, for display and provenance only. Normal message responses expose only the three permission booleans for an assistant owned by a local job. Imported grants remain archived and hidden. This field never grants future permission.
+- `toolPermissions`: the permissions granted to this submission, for display and provenance only. Normal message responses expose the three native booleans and validated optional exact MCP selections for an assistant owned by a local job. MCP activity keeps `source: "mcp"`, `connectionId`, `connectionName`, remote `toolName`, and `catalogRevision`, including pending, failed, and blocked records. Imported grants remain archived and hidden. This field never grants future permission.
 - `toolBudget`: `callLimit` and `roundLimit`, each `null` when off, `executedCalls`, `executedRounds`, and `stopReason`, which is `null` until a work budget stops tools. Limits and counters use distinct fields.
 
 Activity does not include host paths or engine errors. File links point to authenticated workspace downloads. The execution API retains bounded full stdout/stderr. Tool context receives at most 8000 bytes per stream and eight links each in `files` and `availableFiles`, with `totalFiles` and `totalAvailableFiles`. Long paths can reduce those link counts to keep the 64 KiB result bound. Display activity can include all changed file links in `files` and the same bounded current links in `availableFiles`. Render all text as untrusted content.
@@ -136,11 +137,11 @@ These are relative workspace outputs. No document code runs in the chat process.
 
 ```js
 const executions = new Executions(store, workspace, runner, emit, { enabled: true });
-const tools = new Tools(workspace, executions);
+const tools = new Tools(workspace, executions, mcp); // Optional configured Mcp service.
 const generations = new Generations(store, emit, { tools, media });
 ```
 
-Inject a configured `RunnerClient`; there is no direct host-process fallback. Without a configured runner, execution readiness is false. Workspace tools can still operate without runner execution.
+Inject a configured `RunnerClient`; there is no direct host-process fallback. Without a configured runner, execution readiness is false. Workspace tools can still operate without runner execution. The optional `Mcp` service owns explicit HTTP catalogs and dispatch. `/api/runtime` and `nativeTools` stay native-only. MCP connections start inactive, never auto-connect, and cannot act as an execution fallback. See [MCP.md](MCP.md).
 
 The parent router maps the routes above to `executions.runtime()`, `submit(cid, body)`, `list(cid)`, `get(cid, id)`, `cancel(cid, id)`, `getPackages(cid)`, and `setPackages(cid, body)`. `execute(cid, body, {jobId, signal})` and the optional context argument to `setPackages` are internal model-tool hooks. Never accept that context from an HTTP body or tool argument.
 

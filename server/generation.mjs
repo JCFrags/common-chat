@@ -131,6 +131,8 @@ export class Generations {
     const wantsTools = Object.values(permissions).some(Boolean);
     if (wantsTools && p.capabilities.tools !== true) fail(400, 'The selected connection does not enable tools.');
     if (wantsTools && !this.tools) fail(503, 'Model tools are not configured.');
+    if (permissions.mcp?.length && !this.tools?.prepareMcp) fail(503, 'MCP tools are not configured.');
+    const mcpPlan = this.tools?.prepareMcp?.(permissions) ?? [];
     if (attachments.some(a => ['audio', 'video'].includes(a.kind)) && !this.media?.validateBranch) fail(400, 'Media input is not configured.');
     const commit = definitions => {
     // Every await before this boundary must recheck idempotency, version, and all busy state.
@@ -151,6 +153,7 @@ export class Generations {
     for (const attachment of attachments) {
       if (!this.store.get('SELECT id FROM attachments WHERE id=? AND conversation_id=?', attachment.id, cid)) fail(409, 'An attachment changed during validation. Review the conversation and try again.');
     }
+    this.tools?.assertPrepared?.(mcpPlan);
     const userId = regenerate || continuing ? parentId : id(), assistantId = id(), jobId = id();
     // Construct and validate the exact request before changing durable state.
     const messages = this.requestMessages(cid, parentId, regenerate || continuing ? null : { id: userId, role: 'user', content, attachments: uploaded }, settings, p);
@@ -186,7 +189,7 @@ export class Generations {
       this.store.touch(cid);
       this.store.run('INSERT INTO requests(id,conversation_id,fingerprint,response) VALUES(?,?,?,?)', input.requestId, cid, fingerprint, JSON.stringify(response));
     });
-    const state = { controller: new AbortController(), cid, assistantId, reason: null, permissions, deadline,
+    const state = { controller: new AbortController(), cid, assistantId, reason: null, permissions, mcpPlan, deadline,
       budgets: { callLimit: settings.toolCalls ?? null, roundLimit: settings.toolRounds ?? null } };
     this.active.set(jobId, state);
     state.promise = new Promise(resolve => setImmediate(resolve)).then(() => this.run(jobId, state, p, payload));
@@ -197,7 +200,7 @@ export class Generations {
     if (!wantsTools && !this.media?.validateBranch && !needsThinkingResolution()) return commit([]);
     const prepare = async () => {
       if (this.media?.validateBranch) await this.media.validateBranch(p, attachments, { signal: validationSignal });
-      const definitions = wantsTools ? await this.tools.prepare(permissions, { signal: validationSignal }) : [];
+      const definitions = wantsTools ? await this.tools.prepare(permissions, { signal: validationSignal, mcpPlan }) : [];
       validationSignal.throwIfAborted();
       // The hook refreshes server-owned metadata. Its return value cannot bypass payload validation.
       if (needsThinkingResolution()) await this.resolveThinking(p, model, { signal: validationSignal });
@@ -208,7 +211,7 @@ export class Generations {
     return pending.finally(() => this.preparing.delete(pending));
   }
   async run(jobId, state, provider, payload) {
-    const { cid, assistantId, controller, permissions } = state;
+    const { cid, assistantId, controller, permissions, mcpPlan = [] } = state;
     let content = '', reasoning = '', finishReason = null, usage = null, timings = null, promptProgress = null, status = 'complete', failure = null;
     let dirty = false, lastFlush = 0, firstTextMs = null, responseMode = null, totalArguments = 0;
     const transcript = [], activity = [], usedIds = new Set();
@@ -308,7 +311,7 @@ export class Generations {
         const allowedCount = Math.min(completedCalls.length, remaining);
         const blockedReason = allowedCount < completedCalls.length ? 'The optional tool work budget was reached. This call was not executed.' : null;
         // Validate the whole batch before any side effect. Budget-blocked calls never dispatch.
-        const validated = completedCalls.map(call => this.tools.validate(call, permissions)).slice(0, allowedCount);
+        const validated = completedCalls.map(call => this.tools.validate(call, permissions, mcpPlan)).slice(0, allowedCount);
         const assistant = { role: 'assistant', content: roundContent || null, tool_calls: completedCalls };
         const results = completedCalls.map(call => ({ role: 'tool', tool_call_id: call.id,
           content: JSON.stringify({ error: 'This call did not finish, or its result was not saved. Inspect current state before retrying.' }) }));
@@ -318,7 +321,7 @@ export class Generations {
         transcript.push(assistant, ...results);
         const offset = activity.length;
         for (const [index, call] of completedCalls.entries()) {
-          usedIds.add(call.id); activity.push({ id: call.id, name: call.function.name,
+          usedIds.add(call.id); activity.push({ id: call.id, name: call.function.name, ...this.tools.activity?.(call, mcpPlan),
             status: index < allowedCount ? 'pending' : 'blocked', summary: index < allowedCount ? 'Waiting for execution.' : blockedReason, files: [] });
         }
         // Pending result placeholders keep crash recovery protocol-valid without replaying anything.
@@ -334,7 +337,9 @@ export class Generations {
           } catch (error) {
             signal.throwIfAborted();
             const message = Number.isInteger(error?.status) && error.status >= 400 && error.status < 500
-              ? errorText(error, provider.apiKey) : 'The tool failed. Check the workspace or isolated runner status before retrying.';
+              ? errorText(error, provider.apiKey) : validatedCall.mcp
+                ? 'The MCP call did not produce a validated saved result. Inspect remote state before connecting and reviewing tools again. No call was retried.'
+                : 'The tool failed. Check the workspace or isolated runner status before retrying.';
             results[index].content = JSON.stringify({ error: message });
             Object.assign(item, { status: 'error', summary: message, files: [] });
           }

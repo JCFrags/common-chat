@@ -15,6 +15,7 @@ import { createWorkspaceHandler } from './workspace-routes.mjs';
 import { RunnerClient } from './runner-client.mjs';
 import { Executions } from './executions.mjs';
 import { Tools } from './tools.mjs';
+import { Mcp } from './mcp.mjs';
 import { Media } from './media.mjs';
 import { release } from './release.mjs';
 import { loadFrontend } from './frontend.mjs';
@@ -80,7 +81,8 @@ export async function createApp(options = {}) {
   const workspace = new Workspace(store, { extractDocument: runner?.extractDocument.bind(runner) });
   const handleWorkspace = createWorkspaceHandler(workspace);
   const executions = new Executions(store, workspace, runner, emit, options.executionOptions);
-  const tools = new Tools(workspace, executions);
+  const mcp = new Mcp(store, emit);
+  const tools = new Tools(workspace, executions, mcp);
   const media = new Media({ mediaProbe: runner?.mediaProbe.bind(runner), readAttachment: a => store.readAttachment(a) });
   const generations = new Generations(store, emit, { ...options.generationOptions, tools, media,
     resolveThinking: async (provider, model) => { await getModelCatalog(provider); return getThinkingCapabilities(provider, model); } });
@@ -225,6 +227,29 @@ export async function createApp(options = {}) {
         if (used) fail(409, 'Stop active generations before deleting this connection.');
         store.run('DELETE FROM providers WHERE id=?', providerMatch[1]); invalidateModelCatalog(providerMatch[1]); emit({ type: 'providers' }); send(res, { deleted: true }); return;
       }
+      const mcpMatch = /^\/api\/mcp\/connections(?:\/([^/]+)(?:\/(connect|disconnect))?)?$/.exec(path);
+      if (mcpMatch) {
+        const [, connectionId, action] = mcpMatch;
+        if (!connectionId && method === 'GET') { send(res, mcp.list()); return; }
+        if (!action && method === 'GET') { send(res, mcp.get(connectionId)); return; }
+        if (!action && ((!connectionId && method === 'POST') || (connectionId && method === 'PUT'))) {
+          send(res, mcp.save(await body(req, 16384), connectionId), connectionId ? 200 : 201); return;
+        }
+        if (connectionId && !action && method === 'DELETE') { send(res, mcp.remove(connectionId)); return; }
+        if (connectionId && action && method === 'POST') {
+          const input = object(await body(req, 4096));
+          if (Object.keys(input).length) fail(400, 'MCP connection actions accept only an empty object.');
+          if (action === 'disconnect') { send(res, await mcp.disconnect(connectionId)); return; }
+          const controller = new AbortController();
+          const abort = () => controller.abort();
+          const disconnected = () => { if (!res.writableEnded) abort(); };
+          req.on('aborted', abort); res.on('close', disconnected);
+          try { send(res, await mcp.connect(connectionId, { signal: controller.signal })); }
+          finally { req.off('aborted', abort); res.off('close', disconnected); }
+          return;
+        }
+        fail(404, 'MCP route not found.');
+      }
       if (path === '/api/conversations' && method === 'GET') {
         const q = url.searchParams.get('q') ?? ''; text(q, 'search', 500, true);
         send(res, store.list(q)); return;
@@ -359,7 +384,7 @@ export async function createApp(options = {}) {
   server.requestTimeout = 30000; server.headersTimeout = 15000; server.maxHeadersCount = 50;
   let stopped = false;
   return {
-    server, store, auth, generations, workspace, executions, transcriptions, bootstrapPassword,
+    server, store, auth, generations, workspace, executions, transcriptions, mcp, bootstrapPassword,
     async listen(port = 3000, host = '127.0.0.1') {
       if (trustedLocal && !['127.0.0.1', 'localhost', '::1'].includes(host)) throw new Error('Trusted-local access must listen on loopback only.');
       await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
@@ -370,6 +395,7 @@ export async function createApp(options = {}) {
       if (stopped) return; stopped = true;
       await transcriptions.stop();
       await generations.stop();
+      await mcp.stop();
       await executions.stop();
       for (const subscriber of subscribers) subscriber.res.end(); subscribers.clear();
       await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
