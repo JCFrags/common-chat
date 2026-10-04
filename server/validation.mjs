@@ -21,20 +21,46 @@ export function integer(value, label, min, max) {
   if (!Number.isSafeInteger(value) || value < min || value > max) fail(400, `Invalid ${label}.`);
   return value;
 }
+export const llamaSamplingFields = ['dynatemp_range', 'dynatemp_exponent', 'top_k', 'min_p', 'xtc_probability',
+  'xtc_threshold', 'typ_p', 'repeat_last_n', 'repeat_penalty', 'dry_multiplier', 'dry_base',
+  'dry_allowed_length', 'dry_penalty_last_n', 'samplers', 'backend_sampling'];
+export const genericSamplingCapabilities = { presence_penalty: 'presencePenalty', frequency_penalty: 'frequencyPenalty', seed: 'seed' };
+const samplerNames = ['dry', 'top_k', 'typ_p', 'top_p', 'min_p', 'top_n_sigma', 'xtc', 'temperature', 'penalties', 'infill'];
+const supplied = value => value !== undefined && value !== null && value !== '';
 export function settings(value = {}) {
   object(value, 'settings');
-  const allowed = new Set(['systemPrompt', 'temperature', 'topP', 'maxTokens', 'toolCalls', 'toolRounds', 'thinking']);
+  const allowed = new Set(['systemPrompt', 'temperature', 'topP', 'maxTokens', 'toolCalls', 'toolRounds', 'thinking',
+    'thinking_budget_tokens', ...llamaSamplingFields, ...Object.keys(genericSamplingCapabilities)]);
   for (const key of Object.keys(value)) if (!allowed.has(key)) fail(400, `Unknown setting: ${key}.`);
   const result = {};
   if ('systemPrompt' in value) result.systemPrompt = text(value.systemPrompt, 'systemPrompt', 100000, true);
-  for (const [key, min, max] of [['temperature', 0, 2], ['topP', 0, 1]]) {
-    if (value[key] !== undefined && value[key] !== null && value[key] !== '') {
+  for (const [key, min, max] of [['temperature', 0, 2], ['topP', 0, 1], ['dynatemp_range', 0, 10],
+    ['dynatemp_exponent', 0, 10], ['min_p', 0, 1], ['xtc_probability', 0, 1], ['xtc_threshold', 0, 1],
+    ['typ_p', 0, 1], ['repeat_penalty', 0, 10], ['presence_penalty', -2, 2], ['frequency_penalty', -2, 2],
+    ['dry_multiplier', 0, 100], ['dry_base', 1, 100]]) {
+    if (supplied(value[key])) {
       if (typeof value[key] !== 'number' || !Number.isFinite(value[key]) || value[key] < min || value[key] > max) fail(400, `Invalid ${key}.`);
       result[key] = value[key];
     }
   }
   if (value.maxTokens !== undefined && value.maxTokens !== null && value.maxTokens !== '') {
-    result.maxTokens = integer(value.maxTokens, 'maxTokens', 1, 1000000);
+    result.maxTokens = value.maxTokens === -1 ? -1 : integer(value.maxTokens, 'maxTokens', 1, 1000000);
+  }
+  for (const [key, min, max] of [['top_k', -1, 1000000], ['repeat_last_n', -1, 1000000],
+    ['dry_allowed_length', 0, 1000000], ['dry_penalty_last_n', -1, 1000000], ['seed', -1, 4294967295],
+    ['thinking_budget_tokens', -1, 1000000]]) {
+    if (supplied(value[key])) result[key] = integer(value[key], key, min, max);
+  }
+  if (supplied(value.backend_sampling)) {
+    if (typeof value.backend_sampling !== 'boolean') fail(400, 'backend_sampling must be a boolean.');
+    result.backend_sampling = value.backend_sampling;
+  }
+  if (supplied(value.samplers)) {
+    const names = typeof value.samplers === 'string' ? text(value.samplers, 'samplers', 500).split(';').map(name => name.trim()).filter(Boolean) : value.samplers;
+    if (!Array.isArray(names) || names.length > samplerNames.length || new Set(names).size !== names.length || names.some(name => !samplerNames.includes(name))) {
+      fail(400, `samplers must be a distinct list of: ${samplerNames.join(', ')}.`);
+    }
+    result.samplers = [...names];
   }
   if (value.thinking !== undefined && value.thinking !== null && value.thinking !== '') {
     if (!['on', 'off', 'none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(value.thinking)) fail(400, 'Invalid thinking level.');
@@ -47,6 +73,40 @@ export function settings(value = {}) {
   return result;
 }
 export const thinkingEffortLevels = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+const uiFields = ['pinned', 'thinkingEnabled', 'reasoningEffort', 'disabledTools', 'disabledToolCategories', 'forkedFromConversationId'];
+const toolCategories = ['browser', 'custom', 'mcp', 'server', 'native', 'workspace', 'execute', 'packages'];
+export function conversationUi(value = {}, strict = true) {
+  if (!strict && (!value || typeof value !== 'object' || Array.isArray(value))) return {};
+  object(value, 'ui');
+  if (strict) for (const key of Object.keys(value)) if (!uiFields.includes(key)) fail(400, `Unknown ui field: ${key}.`);
+  const result = {};
+  for (const key of uiFields) {
+    if (value[key] === undefined) continue;
+    try {
+      if (['pinned', 'thinkingEnabled'].includes(key)) {
+        if (typeof value[key] !== 'boolean') fail(400, `ui.${key} must be a boolean.`);
+        result[key] = value[key];
+      } else if (key === 'reasoningEffort') {
+        if (!['default', 'on', 'off', ...thinkingEffortLevels].includes(value[key])) fail(400, 'Invalid ui.reasoningEffort.');
+        result[key] = value[key];
+      } else if (key === 'forkedFromConversationId') result[key] = text(value[key], `ui.${key}`, 100);
+      else {
+        const items = value[key];
+        if (!Array.isArray(items) || items.length > (key === 'disabledTools' ? 256 : toolCategories.length)) fail(400, `Invalid ui.${key}.`);
+        for (const item of items) {
+          text(item, `ui.${key} item`, 200);
+          if (/[\x00-\x1f\x7f]/.test(item) || key === 'disabledToolCategories' && !toolCategories.includes(item)) fail(400, `Invalid ui.${key} item.`);
+        }
+        result[key] = [...new Set(items)];
+      }
+    } catch (error) { if (strict || !(error instanceof HttpError)) throw error; }
+  }
+  return result;
+}
+export function savedConversationUi(source) {
+  // Legacy llama imports store preferences at the source root. Never expose other source fields.
+  return { ...conversationUi(source, false), ...conversationUi(source?.ui, false) };
+}
 export function thinkingDeclaration(value) {
   const declaration = object(value, 'thinking');
   const protocol = declaration.protocol;
@@ -98,7 +158,8 @@ export function providerConfig(value) {
   models.forEach(m => text(m, 'model', 300));
   const c = object(value.capabilities ?? {}, 'capabilities');
   const capabilities = {};
-  for (const k of ['streaming', 'vision', 'systemPrompt', 'temperature', 'topP', 'maxTokens', 'llamaCppTimings', 'tools']) {
+  for (const k of ['streaming', 'vision', 'systemPrompt', 'temperature', 'topP', 'maxTokens', 'llamaCppTimings',
+    'llamaCppSampling', 'llamaCppThinkingBudget', 'presencePenalty', 'frequencyPenalty', 'seed', 'tools']) {
     if (c[k] !== undefined && typeof c[k] !== 'boolean') fail(400, `Invalid capability: ${k}.`);
     capabilities[k] = c[k] ?? (k === 'streaming' || k === 'systemPrompt');
   }

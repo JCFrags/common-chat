@@ -1,4 +1,4 @@
-import { fail, HttpError } from './validation.mjs';
+import { fail, HttpError, llamaSamplingFields, genericSamplingCapabilities } from './validation.mjs';
 import { getModelCatalog, getThinkingCapabilities } from './model-catalog.mjs';
 
 /** Parse SSE records across arbitrary byte boundaries, including UTF-8 and CRLF. */
@@ -35,13 +35,41 @@ export async function* sseRecords(stream) {
   const result = take(''); if (result !== null) yield result;
 }
 
+/** Map only validated, explicitly enabled controls. No request object can override server authority. */
+export function samplingPayload(provider, settings) {
+  const caps = provider.capabilities, payload = {};
+  for (const [setting, parameter] of [['temperature', 'temperature'], ['topP', 'top_p'], ['maxTokens', caps.tokenParameter ?? 'max_tokens']]) {
+    if (settings[setting] === undefined || setting === 'maxTokens' && settings.maxTokens === -1) continue;
+    if (caps[setting] !== true) fail(400, `The selected connection does not enable ${setting}. Remove that setting or edit its capabilities.`);
+    payload[parameter] = settings[setting];
+  }
+  for (const key of llamaSamplingFields) {
+    if (settings[key] === undefined) continue;
+    if (caps.llamaCppSampling !== true) fail(400, `The selected connection does not enable llamaCppSampling for ${key}.`);
+    payload[key] = settings[key];
+  }
+  for (const [key, capability] of Object.entries(genericSamplingCapabilities)) {
+    if (settings[key] === undefined) continue;
+    if (caps.llamaCppSampling !== true && caps[capability] !== true) fail(400, `The selected connection does not enable ${capability} for ${key}.`);
+    payload[key] = settings[key];
+  }
+  return payload;
+}
+
 /** Provider default sends no override. Preflight and payload use the same model resolver. */
 export function thinkingPayload(provider, settings, model) {
-  if (settings.thinking === undefined) return {};
-  const thinking = getThinkingCapabilities(provider, model);
+  const hasBudget = settings.thinking_budget_tokens !== undefined && settings.thinking_budget_tokens >= 0;
+  if (settings.thinking === undefined && !hasBudget) return {};
+  const thinking = getThinkingCapabilities(provider, model), payload = {};
   if (thinking.protocol === 'unknown') fail(400, 'Thinking support is unknown or stale for this model. Refresh models, configure its protocol, or use the provider default.');
+  if (hasBudget) {
+    if (provider.capabilities.llamaCppThinkingBudget !== true || thinking.protocol !== 'llama_cpp') fail(400, 'Thinking token budgets require llamaCppThinkingBudget and a llama_cpp thinking declaration for this model.');
+    if (settings.thinking === 'off') fail(400, 'A thinking token budget cannot be combined with thinking off.');
+    payload.thinking_budget_tokens = settings.thinking_budget_tokens;
+  }
+  if (settings.thinking === undefined) return payload;
   if (thinking.levels.includes(settings.thinking)) {
-    if (thinking.protocol === 'llama_cpp') return { chat_template_kwargs: { enable_thinking: settings.thinking === 'on' } };
+    if (thinking.protocol === 'llama_cpp') return { ...payload, chat_template_kwargs: { enable_thinking: settings.thinking === 'on' } };
     if (thinking.protocol === 'reasoning_effort') return { reasoning_effort: settings.thinking };
     if (thinking.protocol === 'openrouter_reasoning') return { reasoning: { effort: settings.thinking } };
   }

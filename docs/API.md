@@ -29,6 +29,9 @@ When supplied, `Origin` must equal `PUBLIC_URL`. Host validation also applies to
 | GET, POST | `/api/conversations` | Search or create conversations. Search uses `?q=...`. |
 | GET, PATCH, DELETE | `/api/conversations/:id` | Read, edit, or delete a conversation. |
 | POST | `/api/conversations/:id/generate` | Commit a submission and start a server-owned job. |
+| POST | `/api/conversations/:id/messages` | Save a manual system/user/assistant branch node. |
+| PATCH, DELETE | `/api/conversations/:id/messages/:messageId` | Edit message text/reasoning or delete its subtree. |
+| POST | `/api/conversations/:id/fork` | Copy a selected message path and attachments into a new conversation. |
 | POST | `/api/conversations/:id/attachments` | Upload a base64-encoded file. |
 | GET | `/api/conversations/:id/export` | Export one conversation. |
 | GET, DELETE | `/api/attachments/:id` | Read a file or delete an unattached upload. |
@@ -63,6 +66,11 @@ Workspace route shapes and revision rules are defined in [WORKSPACE.md](WORKSPAC
   "capabilities": {
     "streaming": true,
     "llamaCppTimings": false,
+    "llamaCppSampling": false,
+    "llamaCppThinkingBudget": false,
+    "presencePenalty": false,
+    "frequencyPenalty": false,
+    "seed": false,
     "systemPrompt": true,
     "vision": false,
     "tools": false,
@@ -87,6 +95,31 @@ An empty key on update retains the saved key. `clearKey: true` removes it. Conne
 Legacy `capabilities.thinking` accepts `none` (default), `llama_cpp`, `reasoning_effort`, or `openrouter_reasoning`. Effort protocols require `thinkingLevels`, a nonempty supported subset of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`. Per-model declarations take precedence over the connection declaration. Do not infer support from names, vision, or returned reasoning.
 
 Omitted `settings.thinking` sends no override. With `llama_cpp`, `on` or `off` sends `chat_template_kwargs: { "enable_thinking": true or false }`. With `reasoning_effort`, a supported level sends top-level `reasoning_effort`. With `openrouter_reasoning`, it sends `reasoning: { "effort": "..." }`. A mismatched or unsupported value fails before messages are saved. The selected value stays in the response's settings. See [thinking controls](INTERFACE.md#thinking).
+
+## Typed sampling controls
+
+Existing camelCase settings remain valid. `temperature` maps to `temperature`, `topP` maps to `top_p`, and positive `maxTokens` maps to the configured `tokenParameter`. Each requires its existing capability. `maxTokens: -1` means omit the token-limit override, even when the connection does not support a token-limit field. It does not promise unlimited output or send `-1` to the provider. Zero remains invalid.
+
+The following settings retain their snake_case names in provider requests. `capabilities.llamaCppSampling` must be explicitly true for llama-only fields. It defaults to false, including for older saved connections. No endpoint or model name enables it automatically.
+
+| Setting | Accepted value |
+| --- | --- |
+| `dynatemp_range`, `dynatemp_exponent` | Finite number from 0 to 10. |
+| `top_k` | Integer from -1 to 1000000. |
+| `min_p`, `xtc_probability`, `xtc_threshold`, `typ_p` | Finite number from 0 to 1. |
+| `repeat_last_n`, `dry_penalty_last_n` | Integer from -1 to 1000000. |
+| `repeat_penalty` | Finite number from 0 to 10. |
+| `dry_multiplier` | Finite number from 0 to 100. |
+| `dry_base` | Finite number from 1 to 100. |
+| `dry_allowed_length` | Integer from 0 to 1000000. |
+| `backend_sampling` | Boolean. Explicit false is retained. |
+| `samplers` | Distinct array, or semicolon-separated string, of `dry`, `top_k`, `typ_p`, `top_p`, `min_p`, `top_n_sigma`, `xtc`, `temperature`, `penalties`, or `infill`. Stored and sent as an array. |
+| `presence_penalty`, `frequency_penalty` | Finite number from -2 to 2. Require `llamaCppSampling` or independent `presencePenalty`/`frequencyPenalty` capabilities. |
+| `seed` | Integer from -1 to 4294967295. Requires `llamaCppSampling` or the independent `seed` capability. |
+
+The independent generic capabilities also default to false. Empty/null numeric controls are omitted. Unknown settings fail with HTTP 400 before a submission is saved. An upstream Custom JSON editor may translate only these typed fields and existing settings. It is not a request-payload override. The server owns model, messages, stream, tools, URL, and credentials.
+
+`settings.thinking_budget_tokens` accepts an integer from -1 to 1000000. Non-negative budgets require explicit `capabilities.llamaCppThinkingBudget: true` and a resolved `llama_cpp` thinking declaration for the selected model. They cannot be combined with `thinking: "off"`. `-1` omits the budget override. The current llama UI Low/Medium/High choices use 512/2048/8192 tokens. Max omits the override. Do not convert these llama token budgets into remote reasoning-effort levels. Existing thinking protocols remain separate.
 
 ## Model catalogs and profiles
 
@@ -145,11 +178,37 @@ A successful submission returns HTTP 202 with `jobId`, `messageId`, and `convers
 
 An identical retry must preserve the entire request object and request ID. The server returns the original job instead of creating another response. A different request with an existing ID receives HTTP 409.
 
-Regeneration sets `regenerate: true` and uses a user message ID as `parentId`. It supplies no new content or attachments. Message editing creates a normal submission under the original user's parent node.
+Regeneration sets `regenerate: true` and uses a user message ID as `parentId`. It supplies no new content or attachments. A normal submission under the original user's parent node creates an edited user branch without changing the original node.
+
+Continuation sets `continue: true` with a complete assistant message ID as `parentId`. It supplies no new content or attachments and cannot also request regeneration. The server starts an ordinary assistant job as a new child of that assistant. It preserves the previous node and adds no user message. The same request receipt, exact retry, capability checks, tool preflight, version guard, cancellation, and saved-state events apply. It does not use a browser tool loop or a provider-specific final-message override.
 
 Optional `settings.toolCalls` and `settings.toolRounds` are local per-turn work budgets. Each accepts an integer from 1 to 1000000. Omit a budget to turn it off. These settings are not sent as provider sampling controls. The final text answer does not count as a tool round. A reached budget preserves completed work, records blocked calls without dispatch, and requests a final answer from saved results.
 
 Omitted tool permissions are false. `workspace` enables scoped file tools. `execute` enables isolated Python/shell access to a copied conversation workspace, even if direct workspace tools are off. `packages` permits package verification and restoration of saved dependencies. Permissions apply only to this submission and its bounded follow-up rounds. The web interface checks available tools again for regeneration. Imported permissions, model arguments, and document contents cannot grant permission. See [TOOLS.md](TOOLS.md).
+
+## Conversation UI metadata and manual actions
+
+Snapshots and conversation-list entries expose `ui` separately from sampling `settings`. Supported UI fields are:
+
+- `pinned` and `thinkingEnabled`: booleans.
+- `reasoningEffort`: `default`, `on`, `off`, `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `max`. This is a preference, not a provider-protocol declaration.
+- `disabledTools`: at most 256 distinct nonempty strings, each at most 200 characters without control characters.
+- `disabledToolCategories`: a distinct subset of `browser`, `custom`, `mcp`, `server`, `native`, `workspace`, `execute`, and `packages`.
+- `forkedFromConversationId`: a nonempty string of at most 100 characters.
+
+POST `/api/conversations` accepts `{ title?, settings?, ui? }`. PATCH `/api/conversations/:id` accepts `ui` with the existing `expectedVersion` guard. UI patches merge supplied fields. Use false, empty arrays, or `reasoningEffort: "default"` to reset preferences. Unknown UI fields fail. Validated preferences are stored inside the existing private `source` JSON without removing import provenance. Supported legacy preferences at the source root are also projected. UI fields cannot grant tool permission or change model capabilities.
+
+POST `/api/conversations/:id/messages` accepts `{ expectedVersion, parentId, role, content, reasoning?, attachments? }`. `parentId` is null or an existing node in this conversation. `role` is `system`, `user`, or `assistant`. `attachments` is an array of at most ten distinct known attachment IDs in this conversation. Previously attached files are copied to new attachment records and bytes. Unattached uploads are bound to the new node. Empty system nodes are permitted. Other manual nodes need content, reasoning, or a file. Combined text and reasoning are limited to 2 MiB. The server assigns the ID, complete status, and timestamps. Clients cannot supply tool grants, provider provenance, status, or arbitrary metadata. Success returns HTTP 201 with the authoritative snapshot and makes the node the active leaf.
+
+PATCH `/api/conversations/:id/messages/:messageId` accepts `{ expectedVersion, content?, reasoning? }`, with at least one editable field. It changes only the supplied text. If text actually changes, the server archives any saved tool transcript and grants, preserving the original tool context privately. It retains historical usage and provider details and marks `metadata.editedAt`. The edited transcript is not accepted as local tool authority. A no-op does not change the version. Success returns the snapshot.
+
+DELETE on the same message path accepts `{ expectedVersion }`. It removes that node and descendants, including their attachment bytes and job records, but keeps unrelated branches. If the active leaf was removed, it selects the deleted node's parent. It keeps generation request receipts to prevent replay. Deleted job IDs no longer resolve. It does not undo tool side effects or remove workspace revisions. Success returns the snapshot.
+
+POST `/api/conversations/:id/fork` accepts `{ expectedVersion, messageId, title? }`. It copies only the path from the root through the selected message, with new conversation, message, and attachment IDs and separate attachment bytes. The copy retains saved text, reasoning, terminal status, timestamps, provider details, sampling settings, UI preferences, and private import provenance. It sets `ui.forkedFromConversationId` and records message origins in `metadata.forkedFrom`. No jobs or tool grants are copied. Tool transcripts and grants are archived rather than treated as newly executed local history. Forks are limited to 10,000 path messages and 30 MiB of attachments. Success returns HTTP 201 with the new snapshot.
+
+All manual actions require the current version and an idle conversation, including no active execution or package operation. They emit the existing `changed` event. Invalid fields or ownership fail before durable changes. File-copy transactions remove newly created bytes on failure.
+
+Snapshots include a `warnings` array. Fork warnings state that workspace files, revisions, executions, and package settings were not copied. Existing workspace links refer to the original conversations. Tool-history warnings state that paths containing archived tool context cannot be sent to a model. Select a path without archived context or start a new chat. Read-only archived history cannot grant permission or replay calls. These limits remain visible after rereading a snapshot.
 
 ## Event handling
 

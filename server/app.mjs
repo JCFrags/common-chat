@@ -230,7 +230,8 @@ export async function createApp(options = {}) {
         send(res, store.list(q)); return;
       }
       if (path === '/api/conversations' && method === 'POST') {
-        const input = await body(req, 128 * 1024), cid = store.createConversation(text(input.title ?? 'New chat', 'title', 500), settings(input.settings ?? {}));
+        const input = await body(req, 128 * 1024), cid = store.createConversation(text(input.title ?? 'New chat', 'title', 500), settings(input.settings ?? {}),
+          input.ui === undefined ? {} : store.sourceWithUi({}, input.ui));
         emit({ type: 'changed', conversationId: cid }); send(res, store.snapshot(cid), 201); return;
       }
       if (path === '/api/runtime' && method === 'GET') {
@@ -255,6 +256,25 @@ export async function createApp(options = {}) {
         }
         fail(404, 'Execution route not found.');
       }
+      const messageMatch = /^\/api\/conversations\/([^/]+)\/messages(?:\/([^/]+))?$/.exec(path);
+      if (messageMatch) {
+        const [, cid, mid] = messageMatch;
+        if (!(mid ? ['PATCH', 'DELETE'].includes(method) : method === 'POST')) fail(404, 'Message route not found.');
+        const actions = await import('./conversation-actions.mjs');
+        const input = await body(req, method === 'DELETE' ? 4096 : 5 * 1024 * 1024);
+        let snapshot;
+        if (!mid && method === 'POST') snapshot = actions.createMessage(store, executions, cid, input);
+        else if (mid && method === 'PATCH') snapshot = actions.editMessage(store, executions, cid, mid, input);
+        else if (mid && method === 'DELETE') snapshot = actions.deleteMessage(store, executions, cid, mid, input);
+        else fail(404, 'Message route not found.');
+        emit({ type: 'changed', conversationId: cid }); send(res, snapshot, method === 'POST' ? 201 : 200); return;
+      }
+      const forkMatch = /^\/api\/conversations\/([^/]+)\/fork$/.exec(path);
+      if (forkMatch && method === 'POST') {
+        const { forkConversation } = await import('./conversation-actions.mjs');
+        const snapshot = forkConversation(store, executions, forkMatch[1], await body(req, 4096));
+        emit({ type: 'changed', conversationId: snapshot.id }); send(res, snapshot, 201); return;
+      }
       const conversationMatch = /^\/api\/conversations\/([^/]+)(?:\/(generate|attachments|export))?$/.exec(path);
       if (conversationMatch) {
         const [, cid, action] = conversationMatch;
@@ -266,7 +286,8 @@ export async function createApp(options = {}) {
           let leaf = input.activeLeaf === undefined ? c.active_leaf : input.activeLeaf;
           if (leaf !== null) { text(leaf, 'activeLeaf', 100); store.path(cid, leaf); }
           const opts = input.settings === undefined ? c.settings : JSON.stringify(settings(input.settings));
-          store.run('UPDATE conversations SET title=?,active_leaf=?,settings=? WHERE id=?', title, leaf, opts, cid);
+          const source = input.ui === undefined ? c.source : JSON.stringify(store.sourceWithUi(JSON.parse(c.source), input.ui));
+          store.run('UPDATE conversations SET title=?,active_leaf=?,settings=?,source=? WHERE id=?', title, leaf, opts, source, cid);
           store.touch(cid); emit({ type: 'changed', conversationId: cid }); send(res, store.snapshot(cid)); return;
         }
         if (!action && method === 'DELETE') {

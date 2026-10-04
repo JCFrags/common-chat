@@ -1,5 +1,5 @@
 import { id, now, fail, hash, object, text, settings as validateSettings } from './validation.mjs';
-import { sseRecords, headers, errorText, responseError, limitedText, deltaText, usageStats, timingStats, promptProgressStats, thinkingPayload } from './provider.mjs';
+import { sseRecords, headers, errorText, responseError, limitedText, deltaText, usageStats, timingStats, promptProgressStats, thinkingPayload, samplingPayload } from './provider.mjs';
 import { toolPermissions, toolTranscript, ToolCallAccumulator, TOOL_LIMITS } from './tools.mjs';
 import { modelDiscoveryMode, getThinkingCapabilities } from './model-catalog.mjs';
 
@@ -24,10 +24,9 @@ export class Generations {
     });
   }
   validateCapabilities(p, settings, rows, attachments, model, deferThinking = false) {
+    samplingPayload(p, settings);
+    if (settings.thinking_budget_tokens >= 0 && p.capabilities.llamaCppThinkingBudget !== true) fail(400, 'The selected connection does not enable llamaCppThinkingBudget.');
     if (!deferThinking) thinkingPayload(p, settings, model);
-    for (const key of ['temperature', 'topP', 'maxTokens']) {
-      if (settings[key] !== undefined && !p.capabilities[key]) fail(400, `The selected connection does not enable ${key}. Remove that setting or edit its capabilities.`);
-    }
     if (settings.systemPrompt && !p.capabilities.systemPrompt) fail(400, 'The selected connection does not enable system prompts.');
     for (const row of rows) {
       const meta = JSON.parse(row.metadata);
@@ -103,11 +102,15 @@ export class Generations {
     const parentId = input.parentId ?? null;
     if (parentId !== null) text(parentId, 'parentId', 100);
     const path = this.store.path(cid, parentId);
-    const regenerate = input.regenerate === true;
+    const regenerate = input.regenerate === true, continuing = input.continue === true;
+    if (input.continue !== undefined && typeof input.continue !== 'boolean') fail(400, 'continue must be a boolean.');
+    if (regenerate && continuing) fail(400, 'Choose regeneration or continuation, not both.');
     let content = '', uploaded = [];
-    if (regenerate) {
-      if (!path.length || path.at(-1).role !== 'user') fail(400, 'Regeneration requires a user message as its parent.');
-      if (input.content || input.attachments?.length) fail(400, 'Regeneration cannot add a user message or attachments.');
+    if (regenerate || continuing) {
+      if (regenerate && (!path.length || path.at(-1).role !== 'user')) fail(400, 'Regeneration requires a user message as its parent.');
+      if (continuing && (!path.length || path.at(-1).role !== 'assistant' || path.at(-1).status !== 'complete')) fail(400, 'Continuation requires a complete assistant message as its parent.');
+      if (text(input.content ?? '', 'content', 1000000, true).length ||
+        input.attachments !== undefined && (!Array.isArray(input.attachments) || input.attachments.length)) fail(400, 'Regeneration and continuation cannot add a user message or attachments.');
     } else {
       content = text(input.content ?? '', 'content', 1000000, true);
       const attachmentIds = input.attachments ?? [];
@@ -123,7 +126,7 @@ export class Generations {
     const previousFiles = path.flatMap(m => this.store.all('SELECT * FROM attachments WHERE message_id=?', m.id));
     if ([...previousFiles, ...uploaded].reduce((sum, a) => sum + a.size, 0) > 30 * 1024 * 1024) fail(400, 'This branch exceeds the 30 MiB attachment context limit.');
     const attachments = [...previousFiles, ...uploaded];
-    const needsThinkingResolution = () => settings.thinking !== undefined && typeof this.resolveThinking === 'function' && getThinkingCapabilities(p, model).protocol === 'unknown';
+    const needsThinkingResolution = () => (settings.thinking !== undefined || settings.thinking_budget_tokens >= 0) && typeof this.resolveThinking === 'function' && getThinkingCapabilities(p, model).protocol === 'unknown';
     this.validateCapabilities(p, settings, path, attachments, model, needsThinkingResolution());
     const wantsTools = Object.values(permissions).some(Boolean);
     if (wantsTools && p.capabilities.tools !== true) fail(400, 'The selected connection does not enable tools.');
@@ -148,15 +151,15 @@ export class Generations {
     for (const attachment of attachments) {
       if (!this.store.get('SELECT id FROM attachments WHERE id=? AND conversation_id=?', attachment.id, cid)) fail(409, 'An attachment changed during validation. Review the conversation and try again.');
     }
-    const userId = regenerate ? parentId : id(), assistantId = id(), jobId = id();
+    const userId = regenerate || continuing ? parentId : id(), assistantId = id(), jobId = id();
     // Construct and validate the exact request before changing durable state.
-    const messages = this.requestMessages(cid, parentId, regenerate ? null : { id: userId, role: 'user', content, attachments: uploaded }, settings, p);
+    const messages = this.requestMessages(cid, parentId, regenerate || continuing ? null : { id: userId, role: 'user', content, attachments: uploaded }, settings, p);
     if (p.capabilities.systemPrompt) {
       const guide = 'Common Chat rendering: For a runnable webpage or browser artifact, use a fenced html preview block with a complete HTML document, or javascript run/css preview for browser snippets. Mermaid diagrams render by default. For explanatory code that should be read rather than run, add example after the fence language, including html example or mermaid example. Prefer self-contained artifacts. Use JavaScript, CSS and Mermaid fences for separate parts of the same artifact. Do not mark shell, Python, Node.js or other non-browser code as browser-run artifacts.';
       if (messages[0]?.role === 'system' && typeof messages[0].content === 'string') messages[0].content += `\n\n${guide}`;
       else messages.unshift({ role: 'system', content: guide });
     }
-    const payload = { model, messages, stream: p.capabilities.streaming, ...thinkingPayload(p, settings, model) };
+    const payload = { model, messages, stream: p.capabilities.streaming, ...samplingPayload(p, settings), ...thinkingPayload(p, settings, model) };
     if (definitions.length) payload.tools = definitions;
     if (payload.stream) {
       payload.stream_options = { include_usage: true };
@@ -166,15 +169,12 @@ export class Generations {
         payload.return_progress = true;
       }
     }
-    if (settings.temperature !== undefined) payload.temperature = settings.temperature;
-    if (settings.topP !== undefined) payload.top_p = settings.topP;
-    if (settings.maxTokens !== undefined) payload[p.capabilities.tokenParameter] = settings.maxTokens;
     const response = { jobId, messageId: assistantId, conversationId: cid };
-    this.store.transaction(() => {
-      if (!regenerate) {
+    this.store.attachmentTransaction(copyAttachment => {
+      if (!regenerate && !continuing) {
         this.store.addMessage({ id: userId, conversationId: cid, parentId, role: 'user', content });
         for (const a of uploaded) {
-          if (a.message_id) this.store.addAttachment(cid, { ...a, bytes: this.store.readAttachment(a) }, userId);
+          if (a.message_id) copyAttachment(cid, { ...a, bytes: this.store.readAttachment(a) }, userId);
           else this.store.run('UPDATE attachments SET message_id=? WHERE id=?', userId, a.id);
         }
       }

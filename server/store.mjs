@@ -2,9 +2,14 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, readFileSync, writeFileSync, existsSync, unlinkSync, chmodSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { randomBytes, createCipheriv, createDecipheriv } from 'node:crypto';
-import { id, now, fail, hash, modelConfig as validateModelConfig } from './validation.mjs';
+import { id, now, fail, hash, modelConfig as validateModelConfig, conversationUi, savedConversationUi } from './validation.mjs';
 
 const parse = (s, fallback = {}) => s ? JSON.parse(s) : fallback;
+const record = value => value && typeof value === 'object' && !Array.isArray(value);
+const providerCapabilities = value => ({ llamaCppSampling: false, llamaCppThinkingBudget: false,
+  presencePenalty: false, frequencyPenalty: false, seed: false, ...parse(value) });
+export const archivedToolWarning = 'Some messages contain archived tool history. Select a branch without those messages before generation. Archived history cannot grant tool permissions or replay calls.';
+export const forkWorkspaceWarning = 'Only the selected message path and its attachments were copied. Workspace files, revisions, executions, and package settings were not copied. Original workspace links still refer to the original conversations.';
 export class Store {
   constructor(directory) {
     this.directory = resolve(directory);
@@ -69,6 +74,26 @@ export class Store {
     try { const result = fn(); this.db.exec('COMMIT'); return result; }
     catch (e) { this.db.exec('ROLLBACK'); throw e; }
   }
+  attachmentTransaction(fn) {
+    const created = [];
+    try {
+      return this.transaction(() => fn((cid, file, messageId) => {
+        const attachment = this.addAttachment(cid, file, messageId);
+        created.push(attachment.id); return attachment;
+      }));
+    } catch (error) { this.removeAttachmentFiles(created); throw error; }
+  }
+  removeAttachmentFiles(ids) {
+    for (const aid of ids) { try { unlinkSync(join(this.files, aid)); } catch {} }
+  }
+  sourceWithUi(source, patch) {
+    const result = record(source) ? { ...source } : { archivedSource: source };
+    if (source?.ui !== undefined && !record(source.ui)) {
+      result.archivedUi = result.archivedUi === undefined ? source.ui : { previous: result.archivedUi, ui: source.ui };
+    }
+    result.ui = { ...(record(source?.ui) ? source.ui : {}), ...savedConversationUi(source), ...conversationUi(patch) };
+    return result;
+  }
   touch(cid) { this.run('UPDATE conversations SET version=version+1, updated_at=? WHERE id=?', now(), cid); }
   conversation(cid) {
     const c = this.get('SELECT * FROM conversations WHERE id=?', cid);
@@ -105,18 +130,25 @@ export class Store {
       attachments: this.all('SELECT id,name,mime,kind,size,sha256 FROM attachments WHERE message_id=? ORDER BY created_at,id', row.id) };
   }
   snapshot(cid) {
-    const c = this.conversation(cid);
+    const c = this.conversation(cid), source = parse(c.source);
+    const rows = this.all('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at,id', cid);
+    const warnings = [];
+    if (source?.commonChatFork?.files === 'attachments-only') warnings.push(forkWorkspaceWarning);
+    if (rows.some(row => {
+      const meta = parse(row.metadata);
+      return row.role === 'tool' || meta.archivedToolContext || meta.source?.toolCalls;
+    })) warnings.push(archivedToolWarning);
     return { id: c.id, title: c.title, createdAt: c.created_at, updatedAt: c.updated_at,
-      activeLeaf: c.active_leaf, version: c.version, settings: parse(c.settings),
-      messages: this.all('SELECT * FROM messages WHERE conversation_id=? ORDER BY created_at,id', cid).map(m => this.message(m)),
+      activeLeaf: c.active_leaf, version: c.version, settings: parse(c.settings), ui: savedConversationUi(source), warnings,
+      messages: rows.map(m => this.message(m)),
       activeJob: this.get("SELECT id,message_id AS messageId,status FROM jobs WHERE conversation_id=? AND status='running'", cid) ?? null };
   }
   list(search = '') {
-    return this.all(`SELECT c.id,c.title,c.created_at AS createdAt,c.updated_at AS updatedAt,c.version,
+    return this.all(`SELECT c.id,c.title,c.created_at AS createdAt,c.updated_at AS updatedAt,c.version,c.source,
       EXISTS(SELECT 1 FROM jobs j WHERE j.conversation_id=c.id AND j.status='running') AS running
       FROM conversations c WHERE ?='' OR instr(lower(c.title),lower(?))>0 OR EXISTS
       (SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND instr(lower(m.content),lower(?))>0)
-      ORDER BY c.updated_at DESC LIMIT 1000`, search, search, search);
+      ORDER BY c.updated_at DESC LIMIT 1000`, search, search, search).map(({ source, ...row }) => ({ ...row, ui: savedConversationUi(parse(source)) }));
   }
   path(cid, leaf) {
     if (!leaf) return [];
@@ -142,12 +174,12 @@ export class Store {
   }
   providers() {
     return this.all('SELECT * FROM providers ORDER BY created_at').map(p => ({ id: p.id, name: p.name, baseUrl: p.base_url,
-      models: parse(p.models, []), capabilities: parse(p.capabilities), modelConfig: validateModelConfig(parse(p.model_config)), hasKey: !!p.api_key }));
+      models: parse(p.models, []), capabilities: providerCapabilities(p.capabilities), modelConfig: validateModelConfig(parse(p.model_config)), hasKey: !!p.api_key }));
   }
   provider(pid) {
     const p = this.get('SELECT * FROM providers WHERE id=?', pid);
     if (!p) fail(404, 'Connection not found.');
-    return { ...p, apiKey: this.decrypt(p.api_key), models: parse(p.models, []), capabilities: parse(p.capabilities), modelConfig: validateModelConfig(parse(p.model_config)) };
+    return { ...p, apiKey: this.decrypt(p.api_key), models: parse(p.models, []), capabilities: providerCapabilities(p.capabilities), modelConfig: validateModelConfig(parse(p.model_config)) };
   }
   addAttachment(cid, file, messageId = null) {
     const aid = id();
