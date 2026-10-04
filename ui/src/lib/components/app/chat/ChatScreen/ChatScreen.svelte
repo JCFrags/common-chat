@@ -2,6 +2,7 @@
 	import ChatScreenActionScrollDown from './ChatScreenActionScrollDown.svelte';
 	import ChatScreenDialogsAndAlerts from './ChatScreenDialogsAndAlerts.svelte';
 	import ChatScreenGreeting from './ChatScreenGreeting.svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import CommonPanel from '$lib/components/common/CommonPanel.svelte';
 	import CommonDictation from '$lib/components/common/CommonDictation.svelte';
@@ -34,16 +35,26 @@
 	let { showCenteredEmpty = false } = $props();
 	let chatFormRef: ChatScreenForm | undefined = $state();
 	let commonPanel: CommonPanel | undefined = $state();
+	let dictation: CommonDictation | undefined = $state();
 	let panelOpen = $state(false);
 	let dictationBusy = $state(false);
 	let draftEpoch = $state(0);
 	let previousDraftTarget: string | undefined;
 	let draftTarget = $derived(page.params.id ?? 'new');
 	let dictationTarget = $derived(`${draftTarget}:${draftEpoch}`);
+	function invalidateDictationTarget() {
+		untrack(() => {
+			draftEpoch++;
+			dictation?.cancel('The target draft changed. No transcript was added.');
+		});
+	}
+	beforeNavigate((navigation) => {
+		if (navigation.from) invalidateDictationTarget();
+	});
 	$effect(() => {
 		if (draftTarget !== previousDraftTarget) {
 			previousDraftTarget = draftTarget;
-			draftEpoch++;
+			invalidateDictationTarget();
 		}
 	});
 	setContext('common-run-code', (code: string, kind: 'python' | 'shell') => { void commonPanel?.openCode(code, kind); });
@@ -394,6 +405,7 @@
 				<button type="button" class="rounded-md border px-3 py-1.5 hover:bg-muted" onclick={() => commonPanel?.openSection('files')}>Files</button>
 				<button type="button" class="rounded-md border px-3 py-1.5 hover:bg-muted" onclick={() => commonPanel?.openSection('run')}>Run</button>
 				<CommonDictation
+					bind:this={dictation}
 					targetId={dictationTarget}
 					getTargetId={() => dictationTarget}
 					getDraft={() => chatFormRef?.getDraft() ?? ''}
@@ -415,6 +427,7 @@
 				onFileRemove={fileUpload.handleFileRemove}
 				onFileUpload={fileUpload.handleFileUpload}
 				onSend={handleSendMessage}
+				onDraftTargetChange={invalidateDictationTarget}
 				onStop={() => chatStore.stopGeneration()}
 				onSystemPromptAdd={handleSystemPromptAdd}
 			/>

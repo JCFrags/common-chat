@@ -72,6 +72,7 @@
 		// UI State
 		class?: string;
 		disabled?: boolean;
+		inputDisabled?: boolean;
 		isLoading?: boolean;
 		placeholder?: string;
 		showAddButton?: boolean;
@@ -92,6 +93,7 @@
 		attachments = [],
 		class: className = '',
 		disabled = false,
+		inputDisabled,
 		isLoading = false,
 		onAttachmentRemove,
 		onFilesAdd,
@@ -217,6 +219,7 @@
 		(attachments && attachments.length > 0) || (uploadedFiles && uploadedFiles.length > 0)
 	);
 	let canSubmit = $derived(value.trim().length > 0 || hasAttachments);
+	let isInputDisabled = $derived(inputDisabled ?? disabled);
 
 	// Caret offset restored after a renderer swap. Callers that mutate
 	// `value` themselves (e.g. the mention picker) pin the target offset
@@ -576,7 +579,7 @@
 	></div>
 
 	<div
-		class="{INPUT_CLASSES} overflow-hidden rounded-4xl md:rounded-3xl backdrop-blur-md {disabled
+		class="{INPUT_CLASSES} overflow-hidden rounded-4xl md:rounded-3xl backdrop-blur-md {isInputDisabled
 			? 'cursor-not-allowed opacity-60'
 			: ''}"
 		data-slot="input-area"
@@ -598,7 +601,7 @@
 				bind:this={inputRef}
 				bind:value
 				class="px-5 py-1.5 md:pt-0"
-				{disabled}
+				disabled={isInputDisabled}
 				onInput={() => {
 					pickers.handleInput();
 					onValueChange?.(value);

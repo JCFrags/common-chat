@@ -16,6 +16,7 @@
 		onFileRemove?: (fileId: string) => void;
 		onFileUpload?: (files: File[]) => void;
 		onSend?: (message: string, files?: ChatUploadedFile[]) => Promise<boolean>;
+		onDraftTargetChange?: () => void;
 		onStop?: () => void;
 		onSystemPromptAdd?: (draft: { message: string; files: ChatUploadedFile[] }) => void;
 		uploadedFiles?: ChatUploadedFile[];
@@ -30,6 +31,7 @@
 		onFileRemove,
 		onFileUpload,
 		onSend,
+		onDraftTargetChange,
 		onStop,
 		onSystemPromptAdd,
 		uploadedFiles = $bindable([])
@@ -71,8 +73,13 @@
 	let pendingRequest = $derived(draftMessagesStore.getPending(chatId));
 	let targetWarning = $derived(draftMessagesStore.getWarning(chatId));
 
+	function replaceDraft(text: string): void {
+		// Restored, acknowledged, and programmatically replaced drafts are new dictation targets.
+		onDraftTargetChange?.();
+		message = text;
+	}
 	export function getDraft(): string { return message; }
-	export function setDraft(text: string): void { message = text; }
+	export function setDraft(text: string): void { replaceDraft(text); }
 	export function getTargetId(): string { return chatId ?? 'new'; }
 
 	useDraftMessages({
@@ -81,7 +88,7 @@
 		getInitialMessage: () => initialMessage,
 		getMessage: () => message,
 		setFiles: (f) => (uploadedFiles = f),
-		setMessage: (m) => (message = m)
+		setMessage: replaceDraft
 	});
 
 	function handleFilesAdd(files: File[]) {
@@ -99,18 +106,24 @@
 		submitting = true;
 		try {
 			const success = await onSend?.(messageToSend, filesToSend);
-			// Only an acknowledged turn can clear an unchanged editor at the same target.
-			if (success && getTargetId() === target && message === messageToSend
-				&& uploadedFiles.length === filesToSend.length && uploadedFiles.every((file, index) => file.id === filesToSend[index].id)) {
-				message = ''; uploadedFiles = []; chatFormRef?.resetTextareaHeight();
+			if (success && getTargetId() === target) {
+				onDraftTargetChange?.();
+				// Only an acknowledged turn can clear an unchanged editor at the same target.
+				if (message === messageToSend && uploadedFiles.length === filesToSend.length
+					&& uploadedFiles.every((file, index) => file.id === filesToSend[index].id)) {
+					message = ''; uploadedFiles = []; chatFormRef?.resetTextareaHeight();
+				}
 			}
 		} finally { submitting = false; }
 	}
 
 	async function retrySavedRequest() {
 		if (!chatId || externalBusy || submitting || disabled) return;
+		const target = getTargetId();
 		submitting = true;
-		try { await chatStore.retryPending(chatId); }
+		try {
+			if (await chatStore.retryPending(chatId) && getTargetId() === target) onDraftTargetChange?.();
+		}
 		catch (error) { draftMessagesStore.warning = error instanceof Error ? error.message : String(error); }
 		finally { submitting = false; }
 	}
@@ -148,7 +161,7 @@
 
 	$effect(() => {
 		if (initialMessage !== previousInitialMessage) {
-			message = initialMessage;
+			replaceDraft(initialMessage);
 			previousInitialMessage = initialMessage;
 		}
 	});
@@ -180,6 +193,7 @@
 		bind:value={message}
 		class="mx-auto max-w-3xl {className}"
 		disabled={disabled || externalBusy || submitting}
+		inputDisabled={disabled}
 		{isLoading}
 		onFilesAdd={handleFilesAdd}
 		{onStop}

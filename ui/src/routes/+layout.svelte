@@ -226,7 +226,7 @@
 			{#if draftMessagesStore.warning}<p role="status">{draftMessagesStore.warning}</p>{/if}
 		</form>
 	{:else}
-		<div class="flex items-center justify-between gap-2 px-4 text-sm">
+		<div class="flex items-center justify-between gap-2 px-4 py-2 text-sm">
 			<span>Common{commonStore.session.authenticationRequired === false ? ' · Trusted local access' : ''}</span>
 			{#if commonStore.session.authenticationRequired !== false}<button type="button" class="underline" onclick={signOut}>Sign out and clear device drafts</button>{/if}
 		</div>

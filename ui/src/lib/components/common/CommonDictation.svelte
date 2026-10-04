@@ -93,6 +93,7 @@
 			operation === op &&
 			op.token === sequence &&
 			!op.controller.signal.aborted &&
+			open &&
 			!disabled &&
 			targetId === op.target &&
 			getTargetId() === op.target
@@ -117,10 +118,7 @@
 		op.stream?.getTracks().forEach((track) => track.stop());
 		op.stream = undefined;
 	}
-	function dispose(op: Operation) {
-		op.controller.abort();
-		releaseCapture(op);
-		op.chunks = [];
+	function releasePlayback(op: Operation) {
 		if (op.url) {
 			audio?.pause();
 			if (audio) {
@@ -130,6 +128,13 @@
 			URL.revokeObjectURL(op.url);
 			op.url = undefined;
 		}
+	}
+	function dispose(op: Operation) {
+		op.controller.abort();
+		releaseCapture(op);
+		releasePlayback(op);
+		op.chunks = [];
+		op.clip = undefined;
 		if (input) input.value = '';
 	}
 	export function cancel(
@@ -139,6 +144,7 @@
 		operation = null;
 		sequence++;
 		if (op) dispose(op);
+		onBusyChange(false);
 		phase = 'idle';
 		seconds = 0;
 		status = message;
@@ -162,6 +168,7 @@
 			tracks: []
 		};
 		operation = op;
+		onBusyChange(true);
 		phase = next;
 		error = '';
 		return op;
@@ -352,6 +359,7 @@
 	async function transcribe() {
 		const op = operation;
 		if (!op?.clip || phase !== 'review' || !current(op)) return;
+		releasePlayback(op);
 		phase = 'reading';
 		status = 'Preparing audio for upload. Cancel remains available.';
 		error = '';
@@ -393,9 +401,6 @@
 			}
 		}
 	}
-	$effect(() => {
-		onBusyChange(busy);
-	});
 	$effect(() => {
 		if (open) {
 			recordReason = recordingReason();
@@ -490,9 +495,11 @@
 				src={operation.url}
 				aria-label="Review dictation audio"
 				class="w-full"
-				onerror={() => {
-					if (operation)
-						fail(operation, 'This browser cannot play the clip. Choose or record another clip.');
+				onerror={(event) => {
+					const op = operation;
+					if (phase === 'review' && op && event.currentTarget instanceof HTMLAudioElement
+						&& op.url === event.currentTarget.src)
+						fail(op, 'This browser cannot play the clip. Choose or record another clip.');
 				}}
 			></audio>{/if}
 		<p class="text-sm" role="status" aria-live="polite">
