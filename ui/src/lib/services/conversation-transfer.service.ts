@@ -22,6 +22,11 @@ export class ConversationTransferService {
 	 * @param filename - Filename; if omitted, a deterministic name is generated
 	 */
 	static downloadConversationFile(data: ExportedConversation, filename?: string): void {
+		if (data.commonExport) {
+			const name = (filename ?? this.generateConversationFilename(data.conv, [])).replace(/\.jsonl$/i, '.common-chat.json');
+			this.triggerDownload(new Blob([JSON.stringify(data.commonExport)], { type: 'application/json' }), name);
+			return;
+		}
 		const { conv: conversation, messages: msgs } = data;
 
 		if (!conversation) {
@@ -54,24 +59,19 @@ export class ConversationTransferService {
 		const files: Record<string, Uint8Array> = {};
 
 		for (const session of data) {
-			const baseName = ConversationTransferService.generateConversationFilename(
-				session.conv,
-				session.messages
-			);
+			const generated = ConversationTransferService.generateConversationFilename(session.conv, session.messages);
+			const baseName = session.commonExport ? generated.replace(/\.jsonl$/i, '.common-chat.json') : generated;
 
 			// Disambiguate any duplicate filenames within the archive.
 			let entryName = baseName;
 			let suffix = 1;
 
 			while (usedNames.has(entryName)) {
-				entryName = baseName.replace(
-					new RegExp(`${FileExtensionText.JSONL}$`),
-					`_${suffix++}${FileExtensionText.JSONL}`
-				);
+				entryName = baseName.replace(/\.(jsonl|json)$/i, `_${suffix++}.$1`);
 			}
 			usedNames.add(entryName);
 
-			files[entryName] = strToU8(ConversationTransferService.serializeSessionToJsonl(session));
+			files[entryName] = strToU8(session.commonExport ? JSON.stringify(session.commonExport) : ConversationTransferService.serializeSessionToJsonl(session));
 		}
 
 		const archiveName = `${new Date().toISOString().split(EXPORT_CONV.ISO_DATE_TIME_SEPARATOR)[0]}_conversations${FileExtensionText.ZIP}`;
@@ -124,22 +124,27 @@ export class ConversationTransferService {
 			const sessions: ExportedConversation[] = [];
 
 			for (const [entryName, entryBytes] of Object.entries(entries)) {
-				if (!entryName.toLowerCase().endsWith(FileExtensionText.JSONL)) continue;
-
-				sessions.push(...ConversationTransferService.parseSessionsJsonl(strFromU8(entryBytes)));
+				if (!/\.(json|jsonl)$/i.test(entryName)) throw new Error('Import only conversation JSON or JSONL files.');
+				sessions.push(...ConversationTransferService.parseImportText(strFromU8(entryBytes)));
 			}
 
 			return sessions;
 		}
 
-		const text = strFromU8(bytes);
+		return ConversationTransferService.parseImportText(strFromU8(bytes));
+	}
 
+	private static parseImportText(text: string): ExportedConversation[] {
 		if (ConversationTransferService.isSessionsJsonl(text)) {
 			return ConversationTransferService.parseSessionsJsonl(text);
 		}
 
 		// Legacy JSON format: an array of conversations or a single conversation object.
 		const parsed = JSON.parse(text);
+		if (parsed?.format === 'common-chat') {
+			if (parsed.version !== 1 || !Array.isArray(parsed.conversations)) throw new Error('Unsupported Common export.');
+			return [{ conv: { id: '', name: 'Common export', currNode: null, lastModified: 0 }, messages: [], commonExport: parsed }];
+		}
 
 		if (Array.isArray(parsed)) {
 			return parsed;

@@ -11,7 +11,7 @@ import { browser } from '$app/environment';
 import { SETTING_CONFIG_DEFAULT, SETTINGS_KEYS } from '$lib/constants';
 import { ColorMode } from '$lib/enums';
 import { ParameterSyncService } from '$lib/services/parameter-sync.service';
-import { SettingsService } from '$lib/services/settings.service';
+import { SettingsService, sanitizeDeviceConfig } from '$lib/services/settings.service';
 import { deviceStore } from '$lib/stores/device.svelte';
 // direct imports between stores, not via the barrel, to avoid circular deps
 import { serverStore } from '$lib/stores/server.svelte';
@@ -49,38 +49,15 @@ class SettingsStore {
 	 * Export all settings as a versioned JSON-compatible object.
 	 * The export captures the full config (excluding sensitive values like API key)
 	 * and user overrides. Sensitive fields are filtered out for security by default.
-	 * @param includeSensitiveData - If true, include sensitive fields (apiKey, MCP server headers) in export
+	 * The legacy includeSensitiveData flag cannot export Common credentials or browser MCP configuration.
 	 */
-	exportSettings(includeSensitiveData: boolean = false): SettingsExportType {
-		// Build config excluding sensitive data unless user opts in
-		const configToExport: Record<string, string | number | boolean | undefined> =
-			includeSensitiveData
-				? { ...this.config }
-				: Object.fromEntries(Object.entries(this.config).filter(([key]) => key !== 'apiKey'));
-
-		// Handle MCP servers: exclude custom headers unless user opts in
-		if ('mcpServers' in configToExport && !includeSensitiveData) {
-			try {
-				const mcpServers = JSON.parse(configToExport.mcpServers as string) as Array<
-					Record<string, unknown>
-				>;
-				const safeServers = mcpServers.map((server) => {
-					delete server.headers;
-
-					return server;
-				});
-
-				configToExport.mcpServers = JSON.stringify(safeServers);
-			} catch {
-				// If parsing fails, just exclude the entire mcpServers field
-				delete (configToExport as Record<string, unknown>).mcpServers;
-			}
-		}
+	exportSettings(_includeSensitiveData: boolean = false): SettingsExportType {
+		const configToExport = sanitizeDeviceConfig(this.config);
 
 		return {
 			config: configToExport,
 			timestamp: Date.now(),
-			userOverrides: Array.from(this.userOverrides),
+			userOverrides: Array.from(this.userOverrides).filter((key) => key !== 'apiKey' && key !== 'mcpServers'),
 			version: 1
 		};
 	}
@@ -195,7 +172,7 @@ class SettingsStore {
 		// Restore config (theme is included in config)
 		this.config = {
 			...SETTING_CONFIG_DEFAULT,
-			...data.config
+			...sanitizeDeviceConfig(data.config)
 		};
 
 		// Restore user overrides (derived state — may be stale if server defaults differ)
@@ -339,6 +316,7 @@ class SettingsStore {
 	 * @param value - The new value for the configuration key
 	 */
 	updateConfig<K extends keyof SettingsConfigType>(key: K, value: SettingsConfigType[K]): void {
+		if (key === 'apiKey' || key === 'mcpServers') return;
 		this.config[key] = value;
 
 		if (ParameterSyncService.canSyncParameter(key as string)) {
@@ -373,7 +351,7 @@ class SettingsStore {
 	 * @param updates - Object containing the configuration updates
 	 */
 	updateMultipleConfig(updates: Partial<SettingsConfigType>) {
-		Object.assign(this.config, updates);
+		Object.assign(this.config, sanitizeDeviceConfig(updates));
 
 		const propsDefaults = this.getServerDefaults();
 

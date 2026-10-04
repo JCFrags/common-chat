@@ -1,9 +1,8 @@
-import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_TOKENS } from '$lib/constants';
 import { ReasoningEffort } from '$lib/enums';
-import { conversationsStore, modelsStore, serverStore } from '$lib/stores';
+import { conversationsStore } from '$lib/stores';
+import { commonStore } from '$lib/stores/common.svelte';
 import type { ReasoningEffortLevel } from '$lib/types';
-import type { DatabaseMessage } from '$lib/types/database';
-import { getConversationModel } from '$lib/utils';
+import { toast } from 'svelte-sonner';
 
 export interface UseReasoningMenuReturn {
 	readonly modelSupportsThinking: boolean;
@@ -17,89 +16,25 @@ export interface UseReasoningMenuReturn {
 	select(level: ReasoningEffortLevel): void;
 }
 
-/**
- * Shared reactive state and helpers for the reasoning effort menu.
- *
- * Used by both the desktop dropdown (`ChatFormActionAddReasoningSubmenu`)
- * and the mobile sheet (`ChatFormActionAddSheet`) to avoid duplicating the
- * thinking-support derivation and the effort selection logic.
- */
+/** Use only declared protocol values. Model names and old replies do not declare support. */
 export function useReasoningMenu(): UseReasoningMenuReturn {
-	const conversationModel = $derived(
-		getConversationModel(conversationsStore.activeMessages as DatabaseMessage[])
-	);
-	// a router chat can carry reasoning from an earlier turn before the props
-	// cache is primed, so a model that already produced thinking still qualifies
-	const modelSupportsThinkingFromMessages = $derived.by(() => {
-		const modelId = serverStore.isRouterMode
-			? modelsStore.selectedModelName || conversationModel
-			: null;
-
-		if (!modelId) return false;
-
-		return conversationsStore.activeMessages.some(
-			(m) => m.role === 'assistant' && m.model === modelId && !!m.reasoningContent
-		);
-	});
-	const modelSupportsThinking = $derived.by(() => {
-		void modelsStore.loadedModelIds;
-		void modelsStore.props.cacheVersion;
-
-		if (serverStore.isRouterMode) {
-			const modelId = modelsStore.selectedModelName || conversationModel;
-
-			return (
-				modelsStore.props.checkModelSupportsThinking(modelId ?? '') ||
-				modelSupportsThinkingFromMessages
-			);
-		}
-
-		return modelsStore.props.supportsThinking || modelSupportsThinkingFromMessages;
-	});
+	const declaration = $derived(commonStore.selectedThinking);
 	const currentEffort = $derived(conversationsStore.preferences.getReasoningEffort());
-	const thinkingEnabled = $derived(
-		currentEffort !== ReasoningEffort.OFF && currentEffort !== ReasoningEffort.DEFAULT
-	);
-	// Thinking is effectively on (lightbulb lit) either when an explicit effort
-	// is selected, or when the effort is left at "Default" and the model
-	// supports thinking.
-	const isReasoningActive = $derived(
-		thinkingEnabled || (currentEffort === ReasoningEffort.DEFAULT && modelSupportsThinking)
-	);
-
+	const modelSupportsThinking = $derived(declaration.protocol !== 'none');
+	const isOff = $derived(currentEffort === ReasoningEffort.OFF || currentEffort === ReasoningEffort.NONE);
+	const labels: Record<string, string> = { on: 'On', off: 'Off', none: 'None', minimal: 'Minimal', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' };
+	const levels = $derived<ReasoningEffortLevel[]>([
+		{ label: 'Default', value: ReasoningEffort.DEFAULT },
+		...(declaration.protocol === 'llama_cpp' ? ['on', 'off'] : declaration.protocol === 'none' ? [] : declaration.levels)
+			.map((value) => ({ label: labels[value] ?? value, value: value as ReasoningEffort }))
+	]);
 	return {
-		get currentEffort() {
-			return currentEffort;
-		},
-		get isOff() {
-			return currentEffort === ReasoningEffort.OFF;
-		},
-		get isReasoningActive() {
-			return isReasoningActive;
-		},
-		isSelected(level: ReasoningEffortLevel): boolean {
-			return currentEffort === level.value;
-		},
-		get levels() {
-			return REASONING_EFFORT_LEVELS;
-		},
-		get modelSupportsThinking() {
-			return modelSupportsThinking;
-		},
-		select(level: ReasoningEffortLevel): void {
-			conversationsStore.preferences.setReasoningEffort(level.value as ReasoningEffort);
-		},
-		get thinkingEnabled() {
-			return thinkingEnabled;
-		},
-		tokenLabel(level: ReasoningEffortLevel): string | null {
-			if (level.value === ReasoningEffort.DEFAULT) return 'Model default';
-
-			const tokens = REASONING_EFFORT_TOKENS[level.value];
-
-			if (tokens === undefined) return null;
-
-			return tokens === -1 ? 'Unlimited' : `Max ${tokens.toLocaleString()} tokens`;
-		}
+		get currentEffort() { return currentEffort; }, get isOff() { return isOff; },
+		get modelSupportsThinking() { return modelSupportsThinking; },
+		get thinkingEnabled() { return modelSupportsThinking && currentEffort !== ReasoningEffort.DEFAULT && !isOff; },
+		get isReasoningActive() { return modelSupportsThinking && currentEffort !== ReasoningEffort.DEFAULT && !isOff; },
+		get levels() { return levels; }, isSelected(level) { return currentEffort === level.value; },
+		select(level) { void conversationsStore.preferences.setReasoningEffort(level.value as ReasoningEffort).catch((error) => toast.error(error.message)); },
+		tokenLabel(level) { return level.value === ReasoningEffort.DEFAULT ? 'No override' : declaration.protocol === 'llama_cpp' ? 'llama.cpp on/off' : 'Declared remote effort'; }
 	};
 }

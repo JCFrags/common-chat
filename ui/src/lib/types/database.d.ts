@@ -1,5 +1,13 @@
 import { AttachmentType, ReasoningEffort, ToolSource } from '$lib/enums';
 import type { ChatMessageTimings, ChatMessageType, ChatRole } from '$lib/types/chat';
+import type { CommonSettings, CommonMessage } from './common-api';
+
+export interface CommonAttachmentReference {
+	commonId?: string;
+	commonUrl?: string;
+	commonMime?: string;
+	commonExisting?: boolean;
+}
 
 /**
  * @deprecated Legacy per-conversation MCP server flags. MCP server enabled
@@ -27,9 +35,12 @@ export interface DatabaseConversation {
 	disabledToolCategories?: ToolSource[];
 	forkedFromConversationId?: string;
 	pinned?: boolean;
+	version?: number;
+	settings?: CommonSettings;
+	running?: boolean;
 }
 
-export interface DatabaseMessageExtraAudioFile {
+export interface DatabaseMessageExtraAudioFile extends CommonAttachmentReference {
 	type: AttachmentType.AUDIO;
 	name: string;
 	size?: number;
@@ -37,7 +48,7 @@ export interface DatabaseMessageExtraAudioFile {
 	mimeType: string;
 }
 
-export interface DatabaseMessageExtraVideoFile {
+export interface DatabaseMessageExtraVideoFile extends CommonAttachmentReference {
 	type: AttachmentType.VIDEO;
 	name: string;
 	size?: number;
@@ -45,7 +56,7 @@ export interface DatabaseMessageExtraVideoFile {
 	mimeType: string;
 }
 
-export interface DatabaseMessageExtraImageFile {
+export interface DatabaseMessageExtraImageFile extends CommonAttachmentReference {
 	type: AttachmentType.IMAGE;
 	name: string;
 	size?: number;
@@ -56,14 +67,14 @@ export interface DatabaseMessageExtraImageFile {
  * Legacy format from the old UI — pasted content was stored as "context" type
  * @deprecated Use DatabaseMessageExtraTextFile instead
  */
-export interface DatabaseMessageExtraLegacyContext {
+export interface DatabaseMessageExtraLegacyContext extends CommonAttachmentReference {
 	type: AttachmentType.LEGACY_CONTEXT;
 	name: string;
 	size?: number;
 	content: string;
 }
 
-export interface DatabaseMessageExtraPdfFile {
+export interface DatabaseMessageExtraPdfFile extends CommonAttachmentReference {
 	type: AttachmentType.PDF;
 	base64Data: string;
 	name: string;
@@ -73,14 +84,14 @@ export interface DatabaseMessageExtraPdfFile {
 	processedAsImages: boolean;
 }
 
-export interface DatabaseMessageExtraTextFile {
+export interface DatabaseMessageExtraTextFile extends CommonAttachmentReference {
 	type: AttachmentType.TEXT;
 	name: string;
 	size?: number;
 	content: string;
 }
 
-export interface DatabaseMessageExtraMcpPrompt {
+export interface DatabaseMessageExtraMcpPrompt extends CommonAttachmentReference {
 	type: AttachmentType.MCP_PROMPT;
 	name: string;
 	size?: number;
@@ -90,7 +101,7 @@ export interface DatabaseMessageExtraMcpPrompt {
 	arguments?: Record<string, string>;
 }
 
-export interface DatabaseMessageExtraMcpResource {
+export interface DatabaseMessageExtraMcpResource extends CommonAttachmentReference {
 	type: AttachmentType.MCP_RESOURCE;
 	name: string;
 	size?: number;
@@ -138,11 +149,16 @@ export interface DatabaseMessage {
 	extra?: DatabaseMessageExtra[];
 	timings?: ChatMessageTimings;
 	model?: string;
+	status?: string;
+	providerId?: string | null;
+	/** Unmodified server record. Display metadata is never a future tool grant. */
+	common?: CommonMessage;
 }
 
 export type ExportedConversation = {
 	conv: DatabaseConversation;
 	messages: DatabaseMessage[];
+	commonExport?: unknown;
 };
 
 export type ExportedConversations = ExportedConversation | ExportedConversation[];

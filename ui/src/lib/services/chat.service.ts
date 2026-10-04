@@ -60,6 +60,12 @@ function streamStorageKey(conversationId: string): string {
 	return STREAM_RESUME_LOCALSTORAGE_KEY_PREFIX + conversationId;
 }
 
+// This imported transport is retained for upstream types and render helpers only.
+// Native Common chat stores never invoke it. Block every raw network entry point.
+const fetch: typeof globalThis.fetch = async () => {
+	throw new Error('Raw llama.cpp requests are disabled. Use Common native jobs and frozen-job Stop.');
+};
+
 export class ChatService {
 	// Per-chunk localStorage writes are throttled to at most one per
 	// conversation per interval (saveStreamStateThrottled). The resume offset

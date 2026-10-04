@@ -1,5 +1,6 @@
 import type { ApiChatCompletionToolCall } from './api';
 import type { DatabaseMessage, DatabaseMessageExtra } from './database';
+import type { CommonAttachment } from './common-api';
 import type {
 	AttachmentAction,
 	AttachmentItemEnabledWhen,
@@ -48,6 +49,9 @@ export interface ChatUploadedFile {
 	};
 	isLoading?: boolean;
 	loadError?: string;
+	/** Server-owned upload references. Drafts persist these, never File bytes. */
+	commonAttachments?: CommonAttachment[];
+	commonExisting?: boolean;
 }
 
 export interface ChatAttachmentDisplayItem {

@@ -1,17 +1,14 @@
 import { redactValue } from './redact';
 import { CORS_PROXY, HEADERS } from '$lib/constants';
 import { MimeTypeApplication } from '$lib/enums';
-import { settingsStore } from '$lib/stores/settings/index.svelte';
 
 /**
  * Get authorization headers for API requests
  * Includes Bearer token if API key is configured
  */
 export function getAuthHeaders(): Record<string, string> {
-	const currentConfig = settingsStore.config;
-	const apiKey = currentConfig.apiKey?.toString().trim();
-
-	return apiKey ? { [HEADERS.AUTHORIZATION]: `${HEADERS.BEARER}${apiKey}` } : {};
+	// Common uses an HttpOnly same-origin session cookie. Provider keys stay on the server.
+	return {};
 }
 
 /**

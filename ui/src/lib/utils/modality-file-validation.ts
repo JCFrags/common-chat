@@ -5,7 +5,7 @@
 
 import { FileTypeCategory } from '$lib/enums';
 import type { ModalityCapabilities } from '$lib/types';
-import { getFileTypeCategory } from '$lib/utils';
+import { getFileTypeCategory, getFileTypeCategoryByExtension } from '$lib/utils';
 
 /**
  * Check if a file type is supported by the given modalities
@@ -19,7 +19,7 @@ export function isFileTypeSupportedByModel(
 	mimeType: string | undefined,
 	capabilities: ModalityCapabilities
 ): boolean {
-	const category = mimeType ? getFileTypeCategory(mimeType) : null;
+	const category = (mimeType ? getFileTypeCategory(mimeType) : null) ?? getFileTypeCategoryByExtension(filename);
 
 	// If we can't determine the category from MIME type, fall back to general support check
 	if (!category) {
@@ -75,7 +75,7 @@ export function filterFilesByModalities(
 	const { hasAudio, hasVideo, hasVision } = capabilities;
 
 	for (const file of files) {
-		const category = getFileTypeCategory(file.type);
+		const category = getFileTypeCategory(file.type) ?? getFileTypeCategoryByExtension(file.name);
 
 		let isSupported = true;
 		let reason = '';

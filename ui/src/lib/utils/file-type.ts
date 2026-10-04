@@ -35,6 +35,8 @@ export function getFileTypeCategory(mimeType: string): FileTypeCategory | null {
 			return FileTypeCategory.IMAGE;
 
 		// Audio
+		case 'audio/flac':
+		case 'audio/x-flac':
 		case MimeTypeAudio.MP3_MPEG:
 		case MimeTypeAudio.MP3:
 		case MimeTypeAudio.MP4:
@@ -126,9 +128,15 @@ export function getFileTypeCategoryByExtension(filename: string): FileTypeCatego
 			return FileTypeCategory.IMAGE;
 
 		// Audio
+		case '.flac':
 		case FileExtensionAudio.MP3:
 		case FileExtensionAudio.WAV:
 			return FileTypeCategory.AUDIO;
+
+		// Video
+		case '.mp4':
+		case '.webm':
+			return FileTypeCategory.VIDEO;
 
 		// PDF
 		case FileExtensionPdf.PDF:

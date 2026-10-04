@@ -7,6 +7,7 @@
 	} from '$lib/components/app';
 	import { UI_DATA_ATTRS } from '$lib/constants';
 	import { modelsStore } from '$lib/stores';
+	import { attachmentUrl } from '$lib/services/common-mapping';
 	import {
 		createBase64DataUrl,
 		formatFileSize,
@@ -142,9 +143,15 @@
 		currentItem && activeModelId ? modelsStore.props.modelSupportsVision(activeModelId) : false
 	);
 
+	let commonSrc = $derived.by(() => {
+		const id = currentItem?.attachment?.commonId ?? currentItem?.uploadedFile?.commonAttachments?.[0]?.id;
+		if (!id) return null;
+		try { return attachmentUrl(id); } catch { return null; }
+	});
+
 	let audioSrc = $derived(
 		isAudio && currentItem
-			? (currentItem.uploadedFile?.preview ??
+			? (commonSrc ?? currentItem.uploadedFile?.preview ??
 					(currentItem.attachment &&
 					'mimeType' in currentItem.attachment &&
 					'base64Data' in currentItem.attachment
@@ -158,7 +165,7 @@
 
 	let videoSrc = $derived(
 		isVideo && currentItem
-			? (currentItem.uploadedFile?.preview ??
+			? (commonSrc ?? currentItem.uploadedFile?.preview ??
 					(currentItem.attachment &&
 					'mimeType' in currentItem.attachment &&
 					'base64Data' in currentItem.attachment

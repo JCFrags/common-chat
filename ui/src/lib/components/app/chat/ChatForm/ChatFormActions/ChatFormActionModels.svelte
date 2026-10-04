@@ -34,46 +34,8 @@
 		getConversationModel(conversationsStore.activeMessages as DatabaseMessage[])
 	);
 
-	let lastSyncedConversationModel: string | null = null;
-
-	let selectorModel = $derived.by(() => {
-		const storeModel = modelsStore.selectedModelName;
-
-		if (storeModel && storeModel !== conversationModel) {
-			return storeModel;
-		}
-
-		if (conversationModel) {
-			return conversationModel;
-		}
-
-		return null;
-	});
-
-	$effect(() => {
-		if (conversationModel && conversationModel !== lastSyncedConversationModel) {
-			if (modelsStore.models.some((m) => m.model === conversationModel)) {
-				modelsStore.selectedModelName = conversationModel;
-				modelsStore.selectModelByName(conversationModel);
-			} else {
-				modelsStore.selectedModelName = null;
-				modelsStore.clearSelection();
-			}
-
-			lastSyncedConversationModel = conversationModel;
-		} else if (
-			isRouter &&
-			!modelsStore.selectedModelId &&
-			modelsStore.loadedModelIds.length > 0 &&
-			conversationsStore.activeMessages.length > 0 &&
-			!conversationModel
-		) {
-			lastSyncedConversationModel = null;
-			const first = modelsStore.models.find((m) => modelsStore.loadedModelIds.includes(m.model));
-
-			if (first) modelsStore.selectModelById(first.id);
-		}
-	});
+	// Replies can have the same model ID on another connection. Never retarget selection from history.
+	let selectorModel = $derived(modelsStore.selectedModelName);
 
 	let activeModelId = $derived(modelsStore.activeModelId);
 
@@ -112,25 +74,12 @@
 	});
 
 	$effect(() => {
-		hasModelSelected = !isRouter || !!conversationModel || !!modelsStore.selectedModelId;
+		hasModelSelected = !!modelsStore.selectedModelId;
 	});
 
 	$effect(() => {
-		if (!isRouter) {
-			isSelectedModelInCache = true;
-		} else if (conversationModel) {
-			isSelectedModelInCache = modelsStore.models.some(
-				(option) => option.model === conversationModel
-			);
-		} else {
-			const currentModelId = modelsStore.selectedModelId;
-
-			if (!currentModelId) {
-				isSelectedModelInCache = false;
-			} else {
-				isSelectedModelInCache = modelsStore.models.some((option) => option.id === currentModelId);
-			}
-		}
+		const currentModelId = modelsStore.selectedModelId;
+		isSelectedModelInCache = !!currentModelId && modelsStore.models.some((option) => option.id === currentModelId);
 	});
 
 	$effect(() => {

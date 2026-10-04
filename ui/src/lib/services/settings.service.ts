@@ -1,5 +1,29 @@
 import { browser } from '$app/environment';
-import { CONFIG_LOCALSTORAGE_KEY, USER_OVERRIDES_LOCALSTORAGE_KEY } from '$lib/constants';
+import { CONFIG_LOCALSTORAGE_KEY, USER_OVERRIDES_LOCALSTORAGE_KEY, SETTING_CONFIG_DEFAULT } from '$lib/constants';
+
+const forbidden = new Set(['apiKey', 'mcpServers']);
+const customFields = new Set(['systemPrompt', 'systemMessage', 'temperature', 'topP', 'top_p', 'maxTokens', 'max_tokens',
+	'thinking', 'thinking_budget_tokens', 'toolCalls', 'toolRounds', 'dynatemp_range', 'dynatemp_exponent', 'top_k', 'min_p',
+	'xtc_probability', 'xtc_threshold', 'typ_p', 'repeat_last_n', 'repeat_penalty', 'presence_penalty', 'frequency_penalty',
+	'dry_multiplier', 'dry_base', 'dry_allowed_length', 'dry_penalty_last_n', 'samplers', 'backend_sampling', 'seed']);
+
+/** Device display/generation preferences only. Credentials and browser MCP endpoints stay out. */
+export function sanitizeDeviceConfig(input: Record<string, unknown>): Record<string, string | number | boolean | undefined> {
+	const result: Record<string, string | number | boolean | undefined> = {};
+	for (const [key, value] of Object.entries(input)) {
+		if (forbidden.has(key) || !Object.hasOwn(SETTING_CONFIG_DEFAULT, key)) continue;
+		if (!['string', 'number', 'boolean', 'undefined'].includes(typeof value)) continue;
+		if (typeof value === 'number' && !Number.isFinite(value)) continue;
+		if (key === 'customJson' && typeof value === 'string' && value.trim()) {
+			try {
+				const custom = JSON.parse(value);
+				if (!custom || typeof custom !== 'object' || Array.isArray(custom) || Object.keys(custom).some((field) => !customFields.has(field))) continue;
+			} catch { continue; }
+		}
+		result[key] = value as string | number | boolean | undefined;
+	}
+	return result;
+}
 
 /**
  * SettingsService - localStorage persistence layer for settings
@@ -34,7 +58,8 @@ export class SettingsService {
 				localStorage.getItem(USER_OVERRIDES_LOCALSTORAGE_KEY) || '[]'
 			) as string[];
 
-			return { config, isFirstVisit, userOverrides };
+			return { config: sanitizeDeviceConfig(config), isFirstVisit,
+				userOverrides: userOverrides.filter((key) => typeof key === 'string' && !forbidden.has(key)) };
 		} catch (error) {
 			console.warn('Failed to parse config from localStorage, using defaults:', error);
 
@@ -67,7 +92,7 @@ export class SettingsService {
 		if (!browser) return;
 
 		try {
-			localStorage.setItem(CONFIG_LOCALSTORAGE_KEY, JSON.stringify(config));
+			localStorage.setItem(CONFIG_LOCALSTORAGE_KEY, JSON.stringify(sanitizeDeviceConfig(config)));
 			localStorage.setItem(USER_OVERRIDES_LOCALSTORAGE_KEY, JSON.stringify(userOverrides));
 		} catch (error) {
 			console.error('Failed to save config to localStorage:', error);

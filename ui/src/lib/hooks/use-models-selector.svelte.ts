@@ -140,17 +140,11 @@ export function useModelsSelector(opts: UseModelsSelectorOptions): UseModelsSele
 			});
 		}
 
-		if (!onModelChange && isRouter && !modelsStore.isModelLoaded(option.model)) {
-			isLoadingModel = true;
-
-			modelsStore.status
-				.load(option.model)
-				.catch((error) => console.error('Failed to load model:', error))
-				.finally(() => (isLoadingModel = false));
-		}
+		// Selection updates the Common account preference. It never loads model weights.
 	}
 
 	function getDisplayOption(): ModelOption | undefined {
+		if (modelsStore.selectedModel) return modelsStore.selectedModel;
 		if (!isRouter) {
 			const displayModel = serverModel || currentModel;
 

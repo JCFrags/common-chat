@@ -1,705 +1,173 @@
-/**
- * DatabaseService - IndexedDB persistence for conversations and messages
- *
- * Thin Dexie layer over the conversations/messages tables: CRUD, tree
- * navigation (descendants, reparenting) and cascading deletes. No reactive
- * state; consumed by conversationsStore and the chat flows.
- */
+/** Store-compatible Common adapter. SQLite is the only authoritative chat history. */
+import { api, CommonApiError } from './common-api';
+import { conversationRow, hydrateTextAttachments, snapshotMessages } from './common-mapping';
+import { commonStore } from '$lib/stores/common.svelte';
+import { draftMessagesStore } from '$lib/stores/chat/drafts.svelte';
+import type { CommonSnapshot, CommonUI } from '$lib/types/common-api';
+import type { DatabaseConversation, DatabaseMessage, ExportedConversation } from '$lib/types/database';
+import { toast } from 'svelte-sonner';
 
-import { IDXDB_STORES, IDXDB_TABLES, STORAGE_APP_NAME } from '$lib/constants';
-import { MessageRole } from '$lib/enums';
-import type { McpServerOverride } from '$lib/types/database';
-import type { ExportedConversation } from '$lib/types/database';
-import { filterByLeafNodeId, findDescendantMessages, uuid } from '$lib/utils';
-import Dexie, { type EntityTable } from 'dexie';
-
-class LlamaUiDatabase extends Dexie {
-	[IDXDB_TABLES.conversations]!: EntityTable<DatabaseConversation, string>;
-	[IDXDB_TABLES.messages]!: EntityTable<DatabaseMessage, string>;
-
-	constructor() {
-		super(STORAGE_APP_NAME);
-
-		this.version(1).stores(IDXDB_STORES);
-	}
+const route = (id: string) => `/api/conversations/${encodeURIComponent(id)}`;
+const uiKeys = ['pinned', 'thinkingEnabled', 'reasoningEffort', 'disabledTools', 'disabledToolCategories', 'forkedFromConversationId'] as const;
+function uiFields(value: Partial<DatabaseConversation>): CommonUI {
+	return Object.fromEntries(uiKeys.filter((key) => value[key] !== undefined).map((key) => [key, value[key]]));
 }
 
-const db = new LlamaUiDatabase();
-
 export class DatabaseService {
-	/**
-	 * Deletes multiple conversations in a single transaction. Each deleted
-	 * conversation has its direct children reparented to the nearest surviving
-	 * ancestor (or promoted to top-level). Children also in `ids` are dropped
-	 * entirely rather than reparented.
-	 *
-	 * @param ids - Conversation IDs to delete
-	 */
+	static async snapshot(id: string): Promise<CommonSnapshot> {
+		return commonStore.snapshots.get(id) ?? await commonStore.refreshConversation(id);
+	}
 	static async bulkDeleteConversations(ids: string[]): Promise<void> {
-		const cleanIds = ids.filter((id): id is string => typeof id === 'string' && id.length > 0);
-
-		if (cleanIds.length === 0) return;
-
-		const idSet = new Set(cleanIds);
-
-		await db.transaction(
-			'rw',
-			[db[IDXDB_TABLES.conversations], db[IDXDB_TABLES.messages]],
-			async () => {
-				// Pre-load each to-delete conversation so the per-id reparent
-				// walk-up doesn't ping-pong the same ancestry chain.
-				const prefetched = new Map<string, DatabaseConversation>();
-
-				let frontier = [...cleanIds];
-
-				const requested = new Set<string>(frontier);
-
-				while (frontier.length > 0) {
-					const fetched = await db[IDXDB_TABLES.conversations].bulkGet(frontier);
-
-					frontier = [];
-					for (let i = 0; i < fetched.length; i++) {
-						const conv = fetched[i];
-
-						if (!conv || !conv.id) continue;
-
-						prefetched.set(conv.id, conv);
-						const ancestor = conv.forkedFromConversationId;
-
-						if (ancestor && !prefetched.has(ancestor) && !requested.has(ancestor)) {
-							frontier.push(ancestor);
-							requested.add(ancestor);
-						}
-					}
-				}
-
-				for (const id of cleanIds) {
-					await this.reparentDirectChildren(id, idSet, prefetched);
-				}
-
-				await db[IDXDB_TABLES.conversations].bulkDelete(cleanIds);
-				await db[IDXDB_TABLES.messages].where('convId').anyOf(cleanIds).delete();
-			}
-		);
+		for (const id of new Set(ids)) await this.deleteConversation(id);
 	}
-
-	/**
-	 * Toggles the pinned status of each conversation in `ids` inside a single
-	 * transaction. Treats `pinned === undefined` as `false`, matching the
-	 * semantics of {@link toggleConversationPin} where `!undefined` evaluates
-	 * to `true`. Returns the resulting pinned state for every id that was
-	 * updated; missing ids are omitted from the map.
-	 *
-	 * @param ids - Conversation IDs to toggle
-	 * @returns Map of id -> new pinned state
-	 */
 	static async bulkToggleConversationPins(ids: string[]): Promise<Map<string, boolean>> {
-		const cleanIds = ids.filter((id): id is string => typeof id === 'string' && id.length > 0);
 		const result = new Map<string, boolean>();
-
-		if (cleanIds.length === 0) return result;
-
-		await db.transaction('rw', db[IDXDB_TABLES.conversations], async () => {
-			const convs = await db[IDXDB_TABLES.conversations].bulkGet(cleanIds);
-			const updates: DatabaseConversation[] = [];
-
-			for (let i = 0; i < cleanIds.length; i++) {
-				const conv = convs[i];
-
-				if (!conv) continue;
-
-				const newPinned = !conv.pinned;
-
-				updates.push({ ...conv, pinned: newPinned });
-				result.set(cleanIds[i], newPinned);
-			}
-
-			if (updates.length === 0) return;
-
-			await db[IDXDB_TABLES.conversations].bulkPut(updates);
-		});
-
+		for (const id of new Set(ids)) result.set(id, await this.toggleConversationPin(id));
 		return result;
 	}
-
-	/**
-	 * Creates a new conversation.
-	 *
-	 * @param name - Name of the conversation
-	 * @param fields - Optional extra fields (e.g. reasoningEffort)
-	 * @returns The created conversation
-	 */
-	static async createConversation(
-		name: string,
-		fields?: Partial<Omit<DatabaseConversation, 'id' | 'name' | 'lastModified'>>
-	): Promise<DatabaseConversation> {
-		const conversation: DatabaseConversation = {
-			currNode: '',
-			id: uuid(),
-			lastModified: Date.now(),
-			name,
-			...fields
-		};
-
-		await db[IDXDB_TABLES.conversations].add(conversation);
-
-		return conversation;
+	static async createConversation(name: string, fields?: Partial<DatabaseConversation>): Promise<DatabaseConversation> {
+		const snapshot = await api<CommonSnapshot>('/api/conversations', 'POST', { title: name, ui: uiFields(fields ?? {}) });
+		commonStore.acceptSnapshot(snapshot);
+		return conversationRow(snapshot);
 	}
-
-	/**
-	 * Creates a new message branch by adding a message and updating parent/child relationships.
-	 * Also updates the conversation's currNode to point to the new message.
-	 *
-	 * @param message - Message to add (without id)
-	 * @param parentId - Parent message ID to attach to
-	 * @returns The created message
-	 */
-	static async createMessageBranch(
-		message: Omit<DatabaseMessage, 'id'>,
-		parentId: string | null
-	): Promise<DatabaseMessage> {
-		return await db.transaction(
-			'rw',
-			[db[IDXDB_TABLES.conversations], db[IDXDB_TABLES.messages]],
-			async () => {
-				// Handle null parent (root message case)
-				if (parentId !== null) {
-					const parentMessage = await db[IDXDB_TABLES.messages].get(parentId);
-
-					if (!parentMessage) {
-						throw new Error(`Parent message ${parentId} not found`);
-					}
-				}
-
-				const newMessage: DatabaseMessage = {
-					...message,
-					children: [],
-					id: uuid(),
-					parent: parentId,
-					toolCalls: message.toolCalls ?? ''
-				};
-
-				await db[IDXDB_TABLES.messages].add(newMessage);
-
-				// Update parent's children array if parent exists
-				if (parentId !== null) {
-					await this.addChildToParent(parentId, newMessage.id);
-				}
-
-				await this.updateConversation(message.convId, {
-					currNode: newMessage.id
-				});
-
-				return newMessage;
+	static async createMessageBranch(message: Omit<DatabaseMessage, 'id' | 'parent' | 'model'> & { parent?: string | null; model?: string | null }, parentId: string | null): Promise<DatabaseMessage> {
+		if (!['system', 'user', 'assistant'].includes(message.role)) throw new Error('Common tools are server-owned. Browser tool result messages are disabled.');
+		const snapshot = await this.snapshot(message.convId);
+		const attachments = (message.extra ?? []).map((extra) => {
+			if (!extra.commonId) throw new Error('Upload this attachment to Common before saving it.');
+			return extra.commonId;
+		});
+		const result = await this.mutate(message.convId, '/messages', 'POST', {
+			expectedVersion: snapshot.version, parentId, role: message.role,
+			content: message.content, reasoning: message.reasoningContent, attachments
+		});
+		const id = result.activeLeaf;
+		const created = snapshotMessages(result).find((m) => m.id === id);
+		if (!created) throw new Error('The saved message is missing from the server snapshot. Reload the conversation.');
+		return created;
+	}
+	static async createRootMessage(_id: string): Promise<string> {
+		throw new Error('Common does not create synthetic browser history roots.');
+	}
+	static async createSystemMessage(id: string, content: string, parentId: string | null): Promise<DatabaseMessage> {
+		return this.createMessageBranch({ convId: id, content, parent: parentId, children: [], timestamp: Date.now(), role: 'system', type: 'system' }, parentId);
+	}
+	static async deleteConversation(id: string, options?: { deleteWithForks?: boolean }): Promise<void> {
+		if (options?.deleteWithForks) {
+			await commonStore.refreshList();
+			for (const row of commonStore.conversations.filter((c) => c.ui?.forkedFromConversationId === id)) {
+				await this.deleteConversation(row.id, options);
 			}
-		);
-	}
-
-	/**
-	 * Creates a root message for a new conversation.
-	 * Root messages are not displayed but serve as the tree root for branching.
-	 *
-	 * @param convId - Conversation ID
-	 * @returns The created root message
-	 */
-	static async createRootMessage(convId: string): Promise<string> {
-		const rootMessage: DatabaseMessage = {
-			children: [],
-			content: '',
-			convId,
-			id: uuid(),
-			parent: null,
-			role: MessageRole.SYSTEM,
-			timestamp: Date.now(),
-			toolCalls: '',
-			type: 'root'
-		};
-
-		await db[IDXDB_TABLES.messages].add(rootMessage);
-
-		return rootMessage.id;
-	}
-
-	/**
-	 * Creates a system prompt message for a conversation.
-	 *
-	 * @param convId - Conversation ID
-	 * @param systemPrompt - The system prompt content (must be non-empty)
-	 * @param parentId - Parent message ID (typically the root message)
-	 * @returns The created system message
-	 * @throws Error if systemPrompt is empty or the parent message does not exist
-	 */
-	static async createSystemMessage(
-		convId: string,
-		systemPrompt: string,
-		parentId: string
-	): Promise<DatabaseMessage> {
-		const trimmedPrompt = systemPrompt.trim();
-
-		if (!trimmedPrompt) {
-			throw new Error('Cannot create system message with empty content');
 		}
-
-		return await db.transaction('rw', db[IDXDB_TABLES.messages], async () => {
-			const parentMessage = await db[IDXDB_TABLES.messages].get(parentId);
-
-			if (!parentMessage) {
-				throw new Error(`Parent message ${parentId} not found`);
-			}
-
-			const systemMessage: DatabaseMessage = {
-				children: [],
-				content: trimmedPrompt,
-				convId,
-				id: uuid(),
-				parent: parentId,
-				role: MessageRole.SYSTEM,
-				timestamp: Date.now(),
-				type: MessageRole.SYSTEM
-			};
-
-			await db[IDXDB_TABLES.messages].add(systemMessage);
-			await this.addChildToParent(parentId, systemMessage.id);
-
-			return systemMessage;
-		});
+		const snapshot = await this.snapshot(id);
+		await api(route(id), 'DELETE', { expectedVersion: snapshot.version });
+		commonStore.snapshots.delete(id);
+		commonStore.conversations = commonStore.conversations.filter((c) => c.id !== id);
+		draftMessagesStore.clearDraftMessage(id);
 	}
-
-	/**
-	 * Deletes a conversation and all its messages.
-	 *
-	 * @param id - Conversation ID
-	 */
-	static async deleteConversation(
-		id: string,
-		options?: { deleteWithForks?: boolean }
-	): Promise<void> {
-		await db.transaction(
-			'rw',
-			[db[IDXDB_TABLES.conversations], db[IDXDB_TABLES.messages]],
-			async () => {
-				if (options?.deleteWithForks) {
-					// Recursively collect all descendant IDs
-					const idsToDelete: string[] = [];
-					const queue = [id];
-
-					while (queue.length > 0) {
-						const parentId = queue.pop()!;
-						const children = await db[IDXDB_TABLES.conversations]
-							.filter((c) => c.forkedFromConversationId === parentId)
-							.toArray();
-
-						for (const child of children) {
-							idsToDelete.push(child.id);
-							queue.push(child.id);
-						}
-					}
-
-					for (const forkId of idsToDelete) {
-						await db[IDXDB_TABLES.conversations].delete(forkId);
-						await db[IDXDB_TABLES.messages].where('convId').equals(forkId).delete();
-					}
-				} else {
-					await this.reparentDirectChildren(id);
-				}
-
-				await db[IDXDB_TABLES.conversations].delete(id);
-				await db[IDXDB_TABLES.messages].where('convId').equals(id).delete();
-			}
-		);
+	static async deleteMessage(id: string): Promise<void> {
+		const found = this.findMessage(id);
+		if (!found) throw new Error('Message is unavailable. Reload its conversation.');
+		await this.deleteMessageCascading(found.snapshot.id, id);
 	}
-
-	/**
-	 * Deletes a message and removes it from its parent's children array.
-	 *
-	 * @param messageId - ID of the message to delete
-	 */
-	static async deleteMessage(messageId: string): Promise<void> {
-		await db.transaction('rw', db[IDXDB_TABLES.messages], async () => {
-			const message = await db[IDXDB_TABLES.messages].get(messageId);
-
-			if (!message) return;
-
-			await this.removeChildFromParent(messageId);
-
-			await db[IDXDB_TABLES.messages].delete(messageId);
-		});
+	static async deleteMessageCascading(id: string, messageId: string): Promise<string[]> {
+		const before = await this.snapshot(id);
+		const after = await this.mutate(id, `/messages/${encodeURIComponent(messageId)}`, 'DELETE', { expectedVersion: before.version });
+		return before.messages.filter((m) => !after.messages.some((n) => n.id === m.id)).map((m) => m.id);
 	}
-
-	/**
-	 * Deletes a message and all its descendant messages (cascading deletion).
-	 * This removes the entire branch starting from the specified message.
-	 *
-	 * @param conversationId - ID of the conversation containing the message
-	 * @param messageId - ID of the root message to delete (along with all descendants)
-	 * @returns Array of all deleted message IDs
-	 */
-	static async deleteMessageCascading(
-		conversationId: string,
-		messageId: string
-	): Promise<string[]> {
-		return await db.transaction('rw', db[IDXDB_TABLES.messages], async () => {
-			// Get all messages in the conversation to find descendants
-			const allMessages = await db[IDXDB_TABLES.messages]
-				.where('convId')
-				.equals(conversationId)
-				.toArray();
-			const descendants = findDescendantMessages(allMessages, messageId);
-			const allToDelete = [messageId, ...descendants];
-
-			await this.removeChildFromParent(messageId);
-
-			// Delete all messages in the branch
-			await db[IDXDB_TABLES.messages].bulkDelete(allToDelete);
-
-			return allToDelete;
-		});
+	static async forkConversation(id: string, messageId: string, options: { name: string; includeAttachments: boolean }): Promise<DatabaseConversation> {
+		const source = await this.snapshot(id);
+		const snapshot = await this.mutate(id, '/fork', 'POST', { expectedVersion: source.version, messageId, title: options.name });
+		const warnings = (snapshot as CommonSnapshot & { warnings?: string[] }).warnings;
+		if (warnings?.length) toast.warning(warnings.join(' '));
+		if (!options.includeAttachments) toast.info('Common forks copy saved branch files. Workspace state and tool execution authority are not copied.');
+		return conversationRow(snapshot);
 	}
-
-	/**
-	 * Forks a conversation at a specific message, creating a new conversation
-	 * containing all messages from the root up to (and including) the target message.
-	 *
-	 * @param sourceConvId - The source conversation ID
-	 * @param atMessageId - The message ID to fork at (the new conversation ends here)
-	 * @param options - Fork options (name and whether to include attachments)
-	 * @returns The newly created conversation
-	 */
-	static async forkConversation(
-		sourceConvId: string,
-		atMessageId: string,
-		options: { name: string; includeAttachments: boolean }
-	): Promise<DatabaseConversation> {
-		return await db.transaction(
-			'rw',
-			[db[IDXDB_TABLES.conversations], db[IDXDB_TABLES.messages]],
-			async () => {
-				const sourceConv = await db[IDXDB_TABLES.conversations].get(sourceConvId);
-
-				if (!sourceConv) {
-					throw new Error(`Source conversation ${sourceConvId} not found`);
-				}
-
-				const allMessages = await db[IDXDB_TABLES.messages]
-					.where('convId')
-					.equals(sourceConvId)
-					.toArray();
-				const pathMessages = filterByLeafNodeId(
-					allMessages,
-					atMessageId,
-					true
-				) as DatabaseMessage[];
-
-				if (pathMessages.length === 0) {
-					throw new Error(`Could not resolve message path to ${atMessageId}`);
-				}
-
-				const idMap = new Map<string, string>();
-
-				for (const msg of pathMessages) {
-					idMap.set(msg.id, uuid());
-				}
-
-				const newConvId = uuid();
-				const clonedMessages: DatabaseMessage[] = pathMessages.map((msg) => {
-					const newId = idMap.get(msg.id)!;
-					const newParent = msg.parent ? (idMap.get(msg.parent) ?? null) : null;
-					const newChildren = msg.children
-						.filter((childId: string) => idMap.has(childId))
-						.map((childId: string) => idMap.get(childId)!);
-
-					return {
-						...msg,
-						children: newChildren,
-						convId: newConvId,
-						extra: options.includeAttachments ? msg.extra : undefined,
-						id: newId,
-						parent: newParent
-					};
-				});
-				const lastClonedMessage = clonedMessages[clonedMessages.length - 1];
-				const newConv: DatabaseConversation = {
-					currNode: lastClonedMessage.id,
-					cwd: sourceConv.cwd,
-					forkedFromConversationId: sourceConvId,
-					id: newConvId,
-					lastModified: Date.now(),
-					mcpServerOverrides: sourceConv.mcpServerOverrides
-						? sourceConv.mcpServerOverrides.map((o: McpServerOverride) => ({
-								enabled: o.enabled,
-								serverId: o.serverId
-							}))
-						: undefined,
-					name: options.name
-				};
-
-				await db[IDXDB_TABLES.conversations].add(newConv);
-				await db[IDXDB_TABLES.messages].bulkAdd(clonedMessages);
-
-				return newConv;
-			}
-		);
-	}
-
-	/**
-	 * Gets all conversations, sorted by last modified time (newest first).
-	 *
-	 * @returns Array of conversations
-	 */
 	static async getAllConversations(): Promise<DatabaseConversation[]> {
-		return await db[IDXDB_TABLES.conversations].orderBy('lastModified').reverse().toArray();
+		await commonStore.refreshList();
+		return commonStore.conversations.map(conversationRow);
 	}
-
-	/**
-	 * Gets a conversation by ID.
-	 *
-	 * @param id - Conversation ID
-	 * @returns The conversation if found, otherwise undefined
-	 */
 	static async getConversation(id: string): Promise<DatabaseConversation | undefined> {
-		return await db[IDXDB_TABLES.conversations].get(id);
+		try { return conversationRow(await commonStore.refreshConversation(id)); }
+		catch (error) { if (error instanceof CommonApiError && error.status === 404) return undefined; throw error; }
 	}
-
-	/**
-	 * Gets all messages in a conversation, sorted by timestamp (oldest first).
-	 *
-	 * @param convId - Conversation ID
-	 * @returns Array of messages in the conversation
-	 */
-	static async getConversationMessages(convId: string): Promise<DatabaseMessage[]> {
-		return await db[IDXDB_TABLES.messages].where('convId').equals(convId).sortBy('timestamp');
+	static async getConversationMessages(id: string): Promise<DatabaseMessage[]> {
+		const snapshot = await this.snapshot(id);
+		await hydrateTextAttachments(snapshot).catch((error) => { toast.warning(error.message); });
+		return snapshotMessages(snapshot);
 	}
-
-	/**
-	 * Loads multiple conversations with all of their messages in two bulk
-	 * reads. Missing conversations are silently omitted from the result.
-	 *
-	 * @param convIds - Conversation IDs to load
-	 * @returns Map of id -> { conv, messages }. Messages are sorted ascending by timestamp.
-	 */
-	static async getConversationsWithMessages(
-		convIds: string[]
-	): Promise<Map<string, ExportedConversation>> {
+	static async getConversationsWithMessages(ids: string[]): Promise<Map<string, ExportedConversation>> {
 		const result = new Map<string, ExportedConversation>();
-		const cleanIds = convIds.filter((id): id is string => typeof id === 'string' && id.length > 0);
-
-		if (cleanIds.length === 0) return result;
-
-		const [convs, allMessages] = await Promise.all([
-			db[IDXDB_TABLES.conversations].bulkGet(cleanIds),
-			db[IDXDB_TABLES.messages].where('convId').anyOf(cleanIds).toArray()
-		]);
-		const messagesByConv = new Map<string, DatabaseMessage[]>();
-
-		for (const msg of allMessages) {
-			const bucket = messagesByConv.get(msg.convId);
-
-			if (bucket) bucket.push(msg);
-			else messagesByConv.set(msg.convId, [msg]);
+		for (const id of ids) {
+			const snapshot = await this.snapshot(id);
+			const native = await api(`${route(id)}/export`);
+			result.set(id, { conv: conversationRow(snapshot), messages: [], commonExport: native });
 		}
-
-		for (let i = 0; i < cleanIds.length; i++) {
-			const conv = convs[i];
-
-			if (!conv) continue;
-
-			const messages = (messagesByConv.get(conv.id) ?? []).sort(
-				(a, b) => a.timestamp - b.timestamp
-			);
-
-			result.set(conv.id, { conv, messages });
-		}
-
 		return result;
 	}
-
-	/**
-	 * Imports multiple conversations and their messages.
-	 * Skips conversations that already exist.
-	 *
-	 * @param data - Array of { conv, messages } objects
-	 * @returns The conversations written to the database and the ones skipped
-	 */
-	static async importConversations(
-		data: { conv: DatabaseConversation; messages: DatabaseMessage[] }[]
-	): Promise<{ imported: DatabaseConversation[]; skipped: DatabaseConversation[] }> {
-		const imported: DatabaseConversation[] = [];
-		const skipped: DatabaseConversation[] = [];
-
-		return await db.transaction(
-			'rw',
-			[db[IDXDB_TABLES.conversations], db[IDXDB_TABLES.messages]],
-			async () => {
-				for (const item of data) {
-					const { conv, messages } = item;
-					const existing = await db[IDXDB_TABLES.conversations].get(conv.id);
-
-					if (existing) {
-						skipped.push(conv);
-
-						continue;
-					}
-
-					await db[IDXDB_TABLES.conversations].add(conv);
-					for (const msg of messages) {
-						await db[IDXDB_TABLES.messages].put(msg);
-					}
-
-					imported.push(conv);
-				}
-
-				return { imported, skipped };
-			}
-		);
+	static async importConversations(data: ExportedConversation[]): Promise<{ imported: DatabaseConversation[]; skipped: DatabaseConversation[] }> {
+		const nativeEntries = data.filter((entry) => entry.commonExport);
+		if (nativeEntries.length && nativeEntries.length !== data.length) throw new Error('Import Common and upstream archives separately so neither format loses metadata.');
+		const native = nativeEntries.length ? { format: 'common-chat', version: 1,
+			conversations: nativeEntries.flatMap((entry) => (entry.commonExport as { conversations: unknown[] }).conversations) } : data;
+		const result = await api<{ conversationIds: string[]; warnings?: string[] }>('/api/import', 'POST', { text: JSON.stringify(native) });
+		if (result.warnings?.length) toast.warning(result.warnings.join(' '));
+		await commonStore.refreshList();
+		return { imported: commonStore.conversations.filter((c) => result.conversationIds.includes(c.id)).map(conversationRow), skipped: [] };
 	}
-
-	/**
-	 * Toggles the pinned status of a conversation.
-	 *
-	 * @param id - Conversation ID
-	 * @returns The new pinned status
-	 */
 	static async toggleConversationPin(id: string): Promise<boolean> {
-		const conversation = await db[IDXDB_TABLES.conversations].get(id);
-
-		if (!conversation) {
-			throw new Error(`Conversation ${id} not found`);
+		const snapshot = await this.snapshot(id);
+		const pinned = !snapshot.ui?.pinned;
+		await this.updateConversation(id, { pinned });
+		return pinned;
+	}
+	static async updateConversation(id: string, updates: Partial<Omit<DatabaseConversation, 'id'>>): Promise<void> {
+		if (updates.cwd !== undefined || updates.mcpServerOverrides !== undefined) {
+			throw new Error('Browser MCP and host working directories cannot run in Common. Use Files and the isolated Run panel.');
 		}
-
-		const newPinnedState = !conversation.pinned;
-
-		await this.updateConversation(id, { pinned: newPinnedState });
-
-		return newPinnedState;
+		const snapshot = await this.snapshot(id);
+		const ui = { ...snapshot.ui, ...uiFields(updates) };
+		await this.mutate(id, '', 'PATCH', { expectedVersion: snapshot.version,
+			...(updates.name !== undefined ? { title: updates.name } : {}),
+			...(updates.currNode !== undefined ? { activeLeaf: updates.currNode } : {}),
+			...(updates.settings !== undefined ? { settings: updates.settings } : {}), ui });
 	}
-
-	/**
-	 * Updates a conversation. `lastModified` is never stamped implicitly;
-	 * pass it in `updates` to bump the conversation in recency ordering.
-	 *
-	 * @param id - Conversation ID
-	 * @param updates - Partial updates to apply
-	 * @returns Promise that resolves when the conversation is updated
-	 */
-	static async updateConversation(
-		id: string,
-		updates: Partial<Omit<DatabaseConversation, 'id'>>
-	): Promise<void> {
-		await db[IDXDB_TABLES.conversations].update(id, updates);
+	static async updateCurrentNode(id: string, nodeId: string): Promise<void> {
+		await this.updateConversation(id, { currNode: nodeId });
 	}
-
-	/**
-	 * Updates the conversation's current node (active branch).
-	 * This determines which conversation path is currently being viewed.
-	 *
-	 * @param convId - Conversation ID
-	 * @param nodeId - Message ID to set as current node
-	 */
-	static async updateCurrentNode(convId: string, nodeId: string): Promise<void> {
-		await this.updateConversation(convId, {
-			currNode: nodeId
+	static async updateMessage(id: string, updates: Partial<Omit<DatabaseMessage, 'id'>>): Promise<void> {
+		const found = this.findMessage(id);
+		if (!found) throw new Error('Message is unavailable. Reload its conversation.');
+		if (updates.parent !== undefined || updates.children !== undefined || updates.toolCalls !== undefined || updates.toolCallId !== undefined) {
+			throw new Error('Common owns branch structure and tool authority. Browser graph updates are disabled.');
+		}
+		const attachments = updates.extra?.map((extra) => {
+			if (!extra.commonId) throw new Error('Upload this attachment to Common before saving it.');
+			return extra.commonId;
+		});
+		await this.mutate(found.snapshot.id, `/messages/${encodeURIComponent(id)}`, 'PATCH', {
+			expectedVersion: found.snapshot.version, content: updates.content ?? found.message.content,
+			reasoning: updates.reasoningContent ?? found.message.reasoning,
+			...(attachments !== undefined ? { attachments } : {})
 		});
 	}
-
-	/**
-	 * Updates a message.
-	 *
-	 * @param id - Message ID
-	 * @param updates - Partial updates to apply
-	 * @returns Promise that resolves when the message is updated
-	 */
-	static async updateMessage(
-		id: string,
-		updates: Partial<Omit<DatabaseMessage, 'id'>>
-	): Promise<void> {
-		await db[IDXDB_TABLES.messages].update(id, updates);
-	}
-
-	/**
-	 * Appends a child id to a parent message's children array.
-	 */
-	private static async addChildToParent(parentId: string, childId: string): Promise<void> {
-		const parent = await db[IDXDB_TABLES.messages].get(parentId);
-
-		if (!parent) return;
-
-		await db[IDXDB_TABLES.messages].update(parentId, {
-			children: [...parent.children, childId]
-		});
-	}
-
-	/**
-	 * Removes a child id from its parent message's children array.
-	 */
-	private static async removeChildFromParent(messageId: string): Promise<void> {
-		const message = await db[IDXDB_TABLES.messages].get(messageId);
-
-		if (!message?.parent) return;
-
-		const parent = await db[IDXDB_TABLES.messages].get(message.parent);
-
-		if (!parent) return;
-
-		parent.children = parent.children.filter((childId: string) => childId !== messageId);
-		await db[IDXDB_TABLES.messages].put(parent);
-	}
-
-	/**
-	 * Reparents direct children of `parentId` to the nearest surviving
-	 * ancestor (or promotes them to top-level when the immediate parent was
-	 * top-level). Walking skips any ancestor listed in `excludeIds`, since
-	 * those will be deleted in the same batch — leaving a grandchild pointing
-	 * at an `excludeIds` entry would orphan it. Children whose own id is in
-	 * `excludeIds` are dropped from the updates (the bulk-delete pass will
-	 * remove them). `prefetched` may carry a pre-fetched ancestor map to
-	 * avoid repeat reads inside a bulk transaction.
-	 */
-	private static async reparentDirectChildren(
-		parentId: string,
-		excludeIds: ReadonlySet<string> = new Set(),
-		prefetched?: ReadonlyMap<string, DatabaseConversation>
-	): Promise<void> {
-		const conv = prefetched?.get(parentId) ?? (await db[IDXDB_TABLES.conversations].get(parentId));
-
-		if (!conv) return;
-
-		let newParent = conv.forkedFromConversationId;
-
-		const visited = new Set<string>([parentId]);
-
-		while (newParent && excludeIds.has(newParent)) {
-			if (visited.has(newParent)) {
-				newParent = undefined;
-
-				break;
-			}
-
-			visited.add(newParent);
-			const next =
-				prefetched?.get(newParent) ?? (await db[IDXDB_TABLES.conversations].get(newParent));
-
-			if (!next) {
-				newParent = undefined;
-
-				break;
-			}
-
-			newParent = next.forkedFromConversationId;
+	private static findMessage(id: string) {
+		for (const snapshot of commonStore.snapshots.values()) {
+			const message = snapshot.messages.find((m) => m.id === id);
+			if (message) return { snapshot, message };
 		}
-
-		const directChildren = await db[IDXDB_TABLES.conversations]
-			.filter((c) => c.forkedFromConversationId === parentId)
-			.toArray();
-		const updates: DatabaseConversation[] = [];
-
-		for (const child of directChildren) {
-			if (excludeIds.has(child.id)) continue;
-
-			updates.push({ ...child, forkedFromConversationId: newParent });
+		return null;
+	}
+	private static async mutate(id: string, action: string, method: string, body: unknown): Promise<CommonSnapshot> {
+		try {
+			const result = await api<CommonSnapshot>(route(id) + action, method, body);
+			return commonStore.acceptSnapshot(result);
+		} catch (error) {
+			if (error instanceof CommonApiError && error.status === 409) {
+				await commonStore.refreshConversation(id);
+				throw new Error('The conversation changed or is busy. Saved state was refreshed. Review the target before trying again.');
+			}
+			throw error;
 		}
-
-		if (updates.length === 0) return;
-
-		await db[IDXDB_TABLES.conversations].bulkPut(updates);
 	}
 }

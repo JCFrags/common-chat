@@ -1,6 +1,6 @@
 /**
  * Reasoning effort levels for thinking models.
- * These values are sent to the server and mapped to token budgets.
+ * Values are protocol-specific. Remote effort levels are not token budgets.
  */
 export enum ReasoningEffort {
 	DEFAULT = 'default',
@@ -8,5 +8,9 @@ export enum ReasoningEffort {
 	LOW = 'low',
 	MAX = 'max',
 	MEDIUM = 'medium',
-	OFF = 'off'
+	OFF = 'off',
+	ON = 'on',
+	NONE = 'none',
+	MINIMAL = 'minimal',
+	XHIGH = 'xhigh'
 }

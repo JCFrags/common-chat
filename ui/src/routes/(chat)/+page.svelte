@@ -3,12 +3,12 @@
 	import { page } from '$app/state';
 	import { DialogModelNotAvailable } from '$lib/components/app';
 	import { APP_NAME, URL_PARAMS } from '$lib/constants';
-	import { conversationsStore, modelsStore, serverStore } from '$lib/stores';
+	import { conversationsStore, modelsStore } from '$lib/stores';
+	import { draftMessagesStore } from '$lib/stores/chat/drafts.svelte';
 	import { onMount } from 'svelte';
 
 	let qParam = $derived(page.url.searchParams.get(URL_PARAMS.QUERY));
 	let modelParam = $derived(page.url.searchParams.get(URL_PARAMS.MODEL));
-	let loadParam = $derived(page.url.searchParams.get(URL_PARAMS.LOAD));
 
 	let showModelNotAvailable = $state(false);
 	let requestedModelName = $state('');
@@ -35,17 +35,6 @@
 				try {
 					await modelsStore.selectModelById(model.id);
 
-					// with ?load=true in router mode, start loading right away so the
-					// model is ready sooner; not awaited so the UI stays usable
-					if (
-						loadParam === 'true' &&
-						serverStore.isRouterMode &&
-						!modelsStore.isModelLoaded(model.id)
-					) {
-						modelsStore.status
-							.load(model.id)
-							.catch((error) => console.error('Failed to load model:', error));
-					}
 				} catch (error) {
 					console.error('Failed to select model:', error);
 					requestedModelName = modelParam;
@@ -61,11 +50,9 @@
 			}
 		}
 
-		// ?q= creates the conversation, the chat route sends the prompt once the
-		// conversation id is in the URL
+		// Links populate an unsent draft. They never start inference or load model weights.
 		if (qParam !== null) {
-			await conversationsStore.createConversation();
-			clearUrlParams();
+			if (draftMessagesStore.setLinkDraft('new', qParam)) clearUrlParams();
 		} else if (modelParam) {
 			clearUrlParams();
 		}

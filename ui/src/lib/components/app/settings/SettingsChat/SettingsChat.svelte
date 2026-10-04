@@ -5,7 +5,6 @@
 		SettingsChatFields,
 		SettingsChatImportExportTab,
 		SettingsChatMobileHeader,
-		SettingsChatToolsTab,
 		SettingsFooter
 	} from '$lib/components/app/settings';
 	import { Button } from '$lib/components/ui/button';
@@ -17,6 +16,9 @@
 	} from '$lib/constants';
 	import { ColorMode } from '$lib/enums/ui.enums';
 	import { modelsStore, serverStore, settingsStore } from '$lib/stores';
+	import { commonStore } from '$lib/stores/common.svelte';
+	import { generationSettings } from '$lib/utils/common-settings';
+	import { sanitizeDeviceConfig } from '$lib/services/settings.service';
 	import type { SettingsSection, SettingsSectionTitle } from '$lib/types';
 	import { setMode } from 'mode-watcher';
 	import { fade } from 'svelte/transition';
@@ -100,18 +102,11 @@
 			if (processedConfig[field] !== undefined && processedConfig[field] !== '') {
 				const numValue = Number(processedConfig[field]);
 
-				if (!isNaN(numValue)) {
-					if ((POSITIVE_INTEGER_FIELDS as readonly string[]).includes(field)) {
-						const entryByMinMax = SETTINGS_CHAT_SECTIONS.flatMap(
-							(section) => section.fields ?? []
-						).find((entry) => entry.key === field);
-						const lo = entryByMinMax?.min ?? 1;
-						const hi = entryByMinMax?.max ?? Number.POSITIVE_INFINITY;
-
-						processedConfig[field] = Math.max(lo, Math.min(hi, Math.round(numValue)));
-					} else {
-						processedConfig[field] = numValue;
+				if (Number.isFinite(numValue)) {
+					if ((POSITIVE_INTEGER_FIELDS as readonly string[]).includes(field) && !Number.isInteger(numValue)) {
+						alert(`${field} must be an integer. The value was not changed.`); return;
 					}
+					processedConfig[field] = numValue;
 				} else {
 					alert(`Invalid numeric value for ${field}. Please enter a valid number.`);
 
@@ -120,6 +115,12 @@
 			}
 		}
 
+		try {
+			if (processedConfig.customJson && !sanitizeDeviceConfig(processedConfig).customJson) {
+				throw new Error('Custom JSON accepts typed sampling settings only. Model, messages, tools, credentials and URL overrides are not saved.');
+			}
+			if (commonStore.selectedProvider) generationSettings(processedConfig, {}, commonStore.selectedProvider, commonStore.selectedThinking);
+		} catch (error) { alert(error instanceof Error ? error.message : String(error)); return; }
 		settingsStore.updateMultipleConfig(processedConfig);
 		onClose?.();
 	}
@@ -148,13 +149,13 @@
 			<div class="space-y-6 pt-3">
 				<div class="grid">
 					{#if currentSection.slug === SETTINGS_SECTION_SLUGS.TOOLS}
-						<SettingsChatToolsTab />
+						<p>Configured native function tools are available automatically. Each new turn checks connection capabilities and runner availability. Saved activity does not grant future permission. Manual Run and package consent stay separate. Native tool budgets are off unless explicitly set. Browser MCP, host working directories and raw llama.cpp management are disabled.</p>
 					{:else if currentSection.slug === SETTINGS_SECTION_SLUGS.IMPORT_EXPORT}
 						<SettingsChatImportExportTab />
 					{:else if currentSection.fields}
 						<div class="space-y-6">
 							<SettingsChatFields
-								fields={currentSection.fields}
+								fields={currentSection.fields.filter((field) => field.key !== 'apiKey' && field.key !== 'mcpServers')}
 								{localConfig}
 								onConfigChange={handleConfigChange}
 								onThemeChange={handleThemeChange}
@@ -173,7 +174,7 @@
 				</div>
 
 				<div class="mt-8 border-t border-border/30 pt-6">
-					<p class="text-xs text-muted-foreground">Settings are saved in browser's localStorage</p>
+					<p class="text-xs text-muted-foreground">Display and typed generation preferences are device-local. Connection keys stay encrypted on Common. Unsupported sampling fields are rejected. Blank values defer to the connection. Catalog availability does not prove that inference is ready.</p>
 				</div>
 			</div>
 

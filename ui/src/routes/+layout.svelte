@@ -2,7 +2,6 @@
 	import '../app.css';
 	import { browser } from '$app/environment';
 	import { goto } from '$app/navigation';
-	import { base } from '$app/paths';
 	import { page } from '$app/state';
 	import { SidebarNavigation } from '$lib/components/app';
 	import { PwaMetaTags, PwaRefreshAlert } from '$lib/components/pwa';
@@ -10,7 +9,6 @@
 	import {
 		FAVICON_PATHS,
 		FAVICON_SELECTORS,
-		HEADERS,
 		NEW_CHAT_TAB_ID,
 		ROUTES,
 		SETTINGS_KEYS,
@@ -23,14 +21,13 @@
 		chatStore,
 		conversationsStore,
 		deviceStore,
-		mcpStore,
-		modelsStore,
-		serverStore,
 		settingsStore,
 		tabsStore,
 		versionStore
 	} from '$lib/stores';
 	import { initStores } from '$lib/stores/init';
+	import { commonStore } from '$lib/stores/common.svelte';
+	import { draftMessagesStore } from '$lib/stores/chat/drafts.svelte';
 	import { ModeWatcher } from 'mode-watcher';
 	import { untrack } from 'svelte';
 	import { onMount } from 'svelte';
@@ -39,8 +36,27 @@
 
 	let { children } = $props();
 
-	// migrations and store startup, ordered explicitly instead of import side effects
-	void initStores();
+	let password = $state('');
+	let loginError = $state('');
+	let signingIn = $state(false);
+	let initialized = $state(false);
+	let cspNonce = $state<string | undefined>();
+
+	async function signIn() {
+		if (signingIn) return;
+		signingIn = true; loginError = '';
+		try {
+			await commonStore.login(password); password = '';
+			await conversationsStore.initialize();
+		} catch (error) { loginError = error instanceof Error ? error.message : String(error); }
+		finally { signingIn = false; }
+	}
+	async function signOut() {
+		try {
+			await commonStore.logout();
+			draftMessagesStore.clearAll();
+		} catch (error) { loginError = error instanceof Error ? error.message : String(error); }
+	}
 
 	let innerHeight = $state<number | undefined>();
 	let innerWidth = $state(browser ? window.innerWidth : 0);
@@ -146,45 +162,10 @@
 		navigateToPrevTab: () => navigateToTab(-1)
 	});
 
-	function checkApiKey() {
-		const apiKey = settingsStore.config.apiKey;
-
-		// Without a stored key there is nothing to re-validate here; the keyless
-		// 401 case is handled by validateApiKey() at navigation time, and the
-		// reload below must never fire in a keyless loop.
-		if (!apiKey || apiKey.trim() === '') {
-			return;
-		}
-
-		untrack(() => {
-			if (
-				(page.route.id === '/(chat)' || page.route.id === '/(chat)/chat/[id]') &&
-				page.status !== 401 &&
-				page.status !== 403
-			) {
-				const headers: Record<string, string> = {
-					'Content-Type': 'application/json',
-					[HEADERS.AUTHORIZATION]: `${HEADERS.BEARER}${apiKey.trim()}`
-				};
-
-				fetch(`${base}/props`, { headers })
-					.then((response) => {
-						if (response.status === 401 || response.status === 403) {
-							window.location.reload();
-						}
-					})
-					.catch((e) => {
-						console.error('Error checking API key:', e);
-					});
-			}
-		});
-	}
-
 	onMount(() => {
+		cspNonce = document.querySelector<HTMLMetaElement>('meta[name="common-chat-csp-nonce"]')?.content;
 		updateFavicon();
-		// snapshot of every backend running stream on first load, populates the sidebar spinners
-		// so the user sees each conv that has a live inference, even ones not opened yet
-		void chatStore.syncRemoteRunningStreams();
+		void initStores().finally(() => { initialized = true; });
 	});
 
 	// refresh that snapshot when the tab returns to the foreground, a stream may have advanced
@@ -201,27 +182,6 @@
 		updateFavicon();
 	});
 
-	// Initialize server properties on app load (run once)
-	$effect(() => {
-		// Only fetch if we don't already have props
-		if (!serverStore.props) {
-			untrack(() => {
-				serverStore.fetch();
-			});
-		}
-	});
-
-	// Sync settings when server props are loaded
-	$effect(() => {
-		const serverProps = serverStore.props;
-
-		if (serverProps) {
-			untrack(() => {
-				settingsStore.syncWithServerDefaults();
-			});
-		}
-	});
-
 	// Inject custom CSS at runtime through an action on the head style node
 	// textContent keeps the value as text, never parsed as HTML
 	function customCss(node: HTMLStyleElement) {
@@ -230,68 +190,7 @@
 		});
 	}
 
-	// Fetch router models when in router mode (for status and modalities)
-	// Wait for models to be loaded first, run only once
-	let routerModelsFetched = false;
 
-	$effect(() => {
-		const isRouter = serverStore.isRouterMode;
-		const modelsCount = modelsStore.models.length;
-
-		// Only fetch router models once when we have models loaded and in router mode
-		if (isRouter && modelsCount > 0 && !routerModelsFetched) {
-			routerModelsFetched = true;
-
-			untrack(() => {
-				modelsStore.fetchRouterModels();
-			});
-		}
-	});
-
-	// Live model status and load progress via the /models/sse feed (router mode)
-	$effect(() => {
-		if (!browser) return;
-
-		if (!serverStore.isRouterMode) return;
-
-		untrack(() => {
-			modelsStore.status.subscribe();
-		});
-
-		return () => {
-			modelsStore.status.unsubscribe();
-		};
-	});
-
-	// Background MCP server health checks on app load.
-	// Health-check every configured server with a URL - including disabled ones -
-	// so the /mcp-servers page can display health metadata for servers that are
-	// currently turned off. Disabled servers never get promoted to active
-	// connections (see runHealthCheck), so their tools/prompts/resources stay
-	// out of the chat-side stores.
-	// Only IDLE servers are checked; already-resolved (SUCCESS / ERROR) servers
-	// keep their existing state, so adding or removing a server does not flash
-	// every other card back through skeleton state.
-	$effect(() => {
-		if (!browser) return;
-
-		const mcpServers = mcpStore.getServers();
-		const serversWithUrls = mcpServers.filter((s) => s.url.trim());
-
-		if (serversWithUrls.length > 0) {
-			untrack(() => {
-				// Run health checks in background (don't await)
-				mcpStore.runHealthChecksForServers(serversWithUrls, true).catch((error) => {
-					console.warn('[layout] MCP health checks failed:', error);
-				});
-			});
-		}
-	});
-
-	// Monitor API key changes and redirect to error page if removed or changed when required
-	$effect(() => {
-		checkApiKey();
-	});
 </script>
 
 <svelte:head>
@@ -300,7 +199,7 @@
 	{/if}
 
 	{#if settingsStore.config.customCss}
-		<style use:customCss></style>
+		<style nonce={cspNonce} use:customCss></style>
 	{/if}
 
 	{#each pwaAssetsHead.links as link (link.href)}
@@ -314,6 +213,24 @@
 <svelte:document onvisibilitychange={handleVisibilityChange} />
 
 <Tooltip.Provider delayDuration={TOOLTIP_DELAY_DURATION}>
+	{#if !initialized}
+		<p class="p-6" role="status">Connecting to Common...</p>
+	{:else if !commonStore.session?.authenticated}
+		<form class="mx-auto flex max-w-sm flex-col gap-3 p-6" onsubmit={(event) => { event.preventDefault(); void signIn(); }}>
+			<h1 class="text-xl">Sign in to Common</h1>
+			<p>Conversation history and encrypted connection keys stay on the Common server. Device drafts stay on this browser until explicit sign-out.</p>
+			<label for="common-password">Password</label>
+			<input id="common-password" class="rounded border p-2" type="password" autocomplete="current-password" bind:value={password} required disabled={signingIn} />
+			<button class="rounded border p-2" type="submit" disabled={signingIn}>{signingIn ? 'Signing in...' : 'Sign in'}</button>
+			{#if loginError || commonStore.connectionError}<p role="alert">{loginError || commonStore.connectionError}</p>{/if}
+			{#if draftMessagesStore.warning}<p role="status">{draftMessagesStore.warning}</p>{/if}
+		</form>
+	{:else}
+		<div class="flex items-center justify-between gap-2 px-4 text-sm">
+			<span>Common{commonStore.session.authenticationRequired === false ? ' · Trusted local access' : ''}</span>
+			{#if commonStore.session.authenticationRequired !== false}<button type="button" class="underline" onclick={signOut}>Sign out and clear device drafts</button>{/if}
+		</div>
+		{#if commonStore.connectionError}<p class="px-4 text-sm" role="status">{commonStore.connectionError}</p>{/if}
 	<div class="flex flex-col md:flex-row">
 		<SidebarNavigation
 			onSearchClick={() => {
@@ -332,6 +249,7 @@
 			{@render children?.()}
 		</div>
 	</div>
+	{/if}
 
 	<ModeWatcher />
 

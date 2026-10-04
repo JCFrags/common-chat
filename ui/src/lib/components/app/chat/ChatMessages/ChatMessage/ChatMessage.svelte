@@ -24,6 +24,8 @@
 	} from '$lib/types';
 	import { deriveAgenticSections } from '$lib/utils';
 	import { parseFilesToMessageExtras } from '$lib/utils/browser-only';
+	import { useCommonEditDraft } from '$lib/hooks/use-common-edit-draft.svelte';
+	import { toast } from 'svelte-sonner';
 
 	interface Props {
 		class?: string;
@@ -48,14 +50,8 @@
 	}: Props = $props();
 
 	let deletionInfo = $state<ChatMessageDeletionInfo | null>(null);
-	// The system message placeholder must never surface as editable content; keeping
-	// it in the derived (not just in handleEdit) guards against prop invalidation
-	// reverting the override while editing
-	let editedContent = $derived(
-		message.role === MessageRole.SYSTEM && message.content === SYSTEM_MESSAGE_PLACEHOLDER
-			? ''
-			: message.content
-	);
+	// Keep reviewed edit text separate from refreshed server message props.
+	let editedContent = $state('');
 
 	// Synthetic cwd-change messages render with the folder-row UI instead
 	// of a user bubble. The persisted flag is the single source of truth.
@@ -106,7 +102,7 @@
 
 		return parts.join('\n\n\n');
 	});
-	let editedExtras = $derived<DatabaseMessageExtra[]>(message.extra ? [...message.extra] : []);
+	let editedExtras = $state<DatabaseMessageExtra[]>([]);
 	let editedUploadedFiles = $state<ChatUploadedFile[]>([]);
 	let isEditing = $state(false);
 	let showDeleteDialog = $state(false);
@@ -115,6 +111,11 @@
 
 	let showSaveOnlyOption = $derived(message.role === MessageRole.USER);
 	let showBranchAfterEditOption = $derived(message.role === MessageRole.ASSISTANT);
+	const editDraft = useCommonEditDraft({
+		message: () => message, isEditing: () => isEditing, content: () => editedContent,
+		extras: () => editedExtras, files: () => editedUploadedFiles,
+		setDraft: (text, extras) => { editedContent = text; editedExtras = extras; editedUploadedFiles = []; }
+	});
 
 	setChatMessageEditContext({
 		cancel: handleCancelEdit,
@@ -283,7 +284,6 @@
 	}
 
 	function handleEdit() {
-		isEditing = true;
 
 		// Clear temporary placeholder content for system messages
 		if (message.role === MessageRole.SYSTEM && message.content === SYSTEM_MESSAGE_PLACEHOLDER) {
@@ -297,6 +297,8 @@
 		textareaElement?.focus({ preventScroll: true });
 		editedExtras = message.extra ? [...message.extra] : [];
 		editedUploadedFiles = [];
+		try { editDraft.begin(); isEditing = true; }
+		catch (error) { toast.error(error instanceof Error ? error.message : String(error)); return; }
 
 		setTimeout(() => {
 			if (textareaElement) {
@@ -333,15 +335,17 @@
 	}
 
 	async function handleSaveEdit() {
+		try {
+		editDraft.assertTarget();
 		if (message.role === MessageRole.SYSTEM) {
 			// System messages: update in place without branching
-			const newContent = editedContent.trim();
+			const newContent = editedContent;
 
 			// If content is empty, remove without deleting children
-			if (!newContent) {
+			if (!newContent.trim()) {
 				const conversationDeleted = await chatStore.removeSystemPromptPlaceholder(message.id);
 
-				isEditing = false;
+				editDraft.acknowledged(); isEditing = false;
 
 				if (conversationDeleted) {
 					goto(ROUTES.START);
@@ -363,28 +367,32 @@
 		} else if (message.role === MessageRole.USER) {
 			const finalExtras = await getMergedExtras();
 
-			chatActions.editWithBranching(message, editedContent.trim(), finalExtras);
+			await chatStore.editMessageWithBranching(message.id, editedContent, finalExtras);
 		} else {
 			// For assistant messages, preserve exact content including trailing whitespace
 			// This is important for the Continue feature to work properly
-			chatActions.editWithReplacement(message, editedContent, shouldBranchAfterEdit);
+			await chatStore.editAssistantMessage(message.id, editedContent, shouldBranchAfterEdit);
 		}
 
-		isEditing = false;
+		editDraft.acknowledged(); isEditing = false;
 		shouldBranchAfterEdit = false;
 		editedUploadedFiles = [];
+		} catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
 	}
 
 	async function handleSaveEditOnly() {
+		try {
+		editDraft.assertTarget();
 		if (message.role === MessageRole.USER) {
-			// For user messages, trim to avoid accidental whitespace
+			// Keep the exact reviewed text. The server owns the saved message.
 			const finalExtras = await getMergedExtras();
 
-			chatActions.editUserMessagePreserveResponses(message, editedContent.trim(), finalExtras);
+			await chatStore.editUserMessagePreserveResponses(message.id, editedContent, finalExtras);
 		}
 
-		isEditing = false;
+		editDraft.acknowledged(); isEditing = false;
 		editedUploadedFiles = [];
+		} catch (error) { toast.error(error instanceof Error ? error.message : String(error)); }
 	}
 
 	async function getMergedExtras(): Promise<DatabaseMessageExtra[]> {
@@ -405,6 +413,14 @@
 </script>
 
 <div>
+	{#if editDraft.available}
+		<div class="mb-2 text-sm" role="status">
+			Saved device edit draft for this message.
+			{#if editDraft.warning}<p>{editDraft.warning}</p>{/if}
+			{#if !isEditing}<button type="button" class="underline" onclick={handleEdit}>Restore edit draft</button>{/if}
+			<button type="button" class="ml-2 underline" onclick={() => { isEditing = false; editDraft.discard(); }}>Discard saved edit</button>
+		</div>
+	{/if}
 	{#if message.role === MessageRole.SYSTEM}
 		<ChatMessageSystem bind:textareaElement class={className} {message} />
 	{:else if mcpPromptExtra}

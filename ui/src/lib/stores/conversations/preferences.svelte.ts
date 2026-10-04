@@ -14,6 +14,7 @@
 import { REASONING_EFFORT_DEFAULT_LOCALSTORAGE_KEY } from '$lib/constants';
 import { ReasoningEffort, ToolSource } from '$lib/enums';
 import { DatabaseService } from '$lib/services/database.service';
+import { rejectLegacyRuntime } from '$lib/services/legacy-runtime';
 // direct imports between stores, not via the barrel, to avoid circular deps
 import { mcpStore } from '$lib/stores/mcp/index.svelte';
 import { toolsStore } from '$lib/stores/tools.svelte';
@@ -141,11 +142,11 @@ export class ConversationPreferences {
 	}
 
 	hasEnabledCwdTools(): boolean {
-		return toolsStore.hasEnabledCwdTools(this._disabledTools, this._disabledToolCategories);
+		return false;
 	}
 
 	isCategoryEnabled(source: ToolSource): boolean {
-		return !this._disabledToolCategories.has(source);
+		return false;
 	}
 
 	/** Group checkbox state: the category flag, or the server key for MCP groups. */
@@ -215,6 +216,7 @@ export class ConversationPreferences {
 	 * @param value - Absolute server-side path to the working directory, or null to clear
 	 */
 	async setCwd(value: string | null): Promise<void> {
+		rejectLegacyRuntime();
 		const trimmed = value?.trim() || undefined;
 
 		// No chat yet - buffer for the first chat the user creates.
@@ -252,16 +254,13 @@ export class ConversationPreferences {
 			return;
 		}
 
-		this.host.applyConversationUpdate(this.host.activeConversation.id, {
-			reasoningEffort: effort
-		});
-
 		await DatabaseService.updateConversation(this.host.activeConversation.id, {
 			reasoningEffort: effort
 		});
 	}
 
 	async toggleCategory(source: ToolSource): Promise<void> {
+		rejectLegacyRuntime();
 		const conv: DatabaseConversation | null = this.host.activeConversation;
 
 		if (!conv) {
@@ -291,6 +290,7 @@ export class ConversationPreferences {
 	}
 
 	async toggleTool(key: string): Promise<void> {
+		rejectLegacyRuntime();
 		const conv: DatabaseConversation | null = this.host.activeConversation;
 
 		if (!conv) {

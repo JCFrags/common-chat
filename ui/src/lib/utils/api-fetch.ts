@@ -1,4 +1,5 @@
 import { getAuthHeaders, getJsonHeaders } from './api-headers';
+import { rejectLegacyRuntime } from '$lib/services/legacy-runtime';
 import { base } from '$app/paths';
 import { API_ABSOLUTE_URL_PROTOCOLS, ERROR_MESSAGES, HTTP_CODE_TO_STRING } from '$lib/constants';
 
@@ -59,6 +60,7 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'headers'> {
  * ```
  */
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
+	rejectLegacyRuntime();
 	const { authOnly = false, headers: customHeaders, ...fetchOptions } = options;
 	const baseHeaders = authOnly ? getAuthHeaders() : getJsonHeaders();
 	const headers = { ...baseHeaders, ...customHeaders };

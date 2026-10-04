@@ -1,10 +1,11 @@
 <script lang="ts">
-	import { goto, replaceState } from '$app/navigation';
+	import { replaceState } from '$app/navigation';
 	import { afterNavigate } from '$app/navigation';
 	import { page } from '$app/state';
 	import { DialogModelNotAvailable } from '$lib/components/app';
-	import { APP_NAME, ROUTES, URL_PARAMS } from '$lib/constants';
+	import { APP_NAME, URL_PARAMS } from '$lib/constants';
 	import { chatStore, conversationsStore, modelsStore } from '$lib/stores';
+	import { draftMessagesStore } from '$lib/stores/chat/drafts.svelte';
 
 	let chatId = $derived(page.params.id);
 	let currentChatId: string | undefined = undefined;
@@ -59,11 +60,9 @@
 			}
 		}
 
-		// Handle ?q= parameter - send message in current conversation
+		// Populate only an empty draft. The user must explicitly select Send.
 		if (qParam !== null) {
-			await chatStore.sendMessage(qParam);
-			// Clear URL params after message is sent
-			clearUrlParams();
+			if (chatId && draftMessagesStore.setLinkDraft(chatId, qParam)) clearUrlParams();
 		} else if (modelParam) {
 			// Clear params even if no message was sent (just model selection)
 			clearUrlParams();
@@ -97,11 +96,8 @@
 			(async () => {
 				const success = await conversationsStore.loadConversation(chatId);
 
-				if (!success) {
-					await goto(ROUTES.START);
-
-					return;
-				}
+				// Keep missing targets and drafts at their original address.
+				if (!success) return;
 
 				chatStore.syncLoadingStateForChat(chatId);
 				// server probe (with localStorage fallback) and attach

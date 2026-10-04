@@ -20,7 +20,7 @@ export interface ModelOption {
 	capabilities: string[];
 	modalities?: ModelModalities;
 	details?: ApiModelDetails['details'];
-	meta?: ApiModelDataEntry['meta'];
+	meta?: ApiModelDataEntry['meta'] & { vocab_type?: string };
 	parsedId?: ParsedModelId;
 	aliases?: string[];
 	tags?: string[];

@@ -7,6 +7,7 @@
  */
 
 import { Client } from '@modelcontextprotocol/sdk/client';
+import { rejectLegacyRuntime } from '$lib/services/legacy-runtime';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import {
 	StreamableHTTPClientTransport,
@@ -111,6 +112,7 @@ export class MCPService {
 		params: ToolCallParams,
 		signal?: AbortSignal
 	): Promise<ToolExecutionResult> {
+		rejectLegacyRuntime();
 		throwIfAborted(signal);
 
 		try {
@@ -199,6 +201,7 @@ export class MCPService {
 		onPhase?: MCPPhaseCallback,
 		listChangedHandlers?: ListChangedHandlers
 	): Promise<MCPConnection> {
+		rejectLegacyRuntime();
 		const startTime = performance.now();
 		const effectiveClientInfo = clientInfo ?? DEFAULT_MCP_CONFIG.clientInfo;
 		const effectiveCapabilities = capabilities ?? DEFAULT_MCP_CONFIG.capabilities;
@@ -464,6 +467,7 @@ export class MCPService {
 		type: MCPTransportType;
 		stopPhaseLogging: () => void;
 	} {
+		rejectLegacyRuntime();
 		if (!config.url) {
 			throw new Error('MCP server configuration is missing url');
 		}
