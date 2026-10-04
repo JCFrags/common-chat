@@ -41,7 +41,8 @@ test('Response statistics retain recognized bounded numbers without coercion or 
 });
 test('Settings preserve explicit zero and reject unsupported names and invalid numbers', () => {
   assert.deepEqual(settings({temperature:0,topP:0,maxTokens:1}), {temperature:0,topP:0,maxTokens:1});
-  for (const input of [{temperature:NaN},{temperature:3},{topP:-1},{maxTokens:0},{maxTokens:1.5},{seed:1}]) assert.throws(()=>settings(input));
+  assert.deepEqual(settings({seed:1}), {seed:1});
+  for (const input of [{temperature:NaN},{temperature:3},{topP:-1},{maxTokens:0},{maxTokens:1.5},{seed:1.5}]) assert.throws(()=>settings(input));
 });
 test('Provider validation rejects credential URLs and non-HTTP schemes', () => {
   for (const baseUrl of ['file:///etc/passwd','http://user:key@host/v1','https://host/v1?key=x','https://host/#fragment']) assert.throws(()=>providerConfig({name:'Test',baseUrl}));

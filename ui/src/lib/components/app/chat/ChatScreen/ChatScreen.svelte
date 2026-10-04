@@ -3,6 +3,9 @@
 	import ChatScreenDialogsAndAlerts from './ChatScreenDialogsAndAlerts.svelte';
 	import ChatScreenGreeting from './ChatScreenGreeting.svelte';
 	import { page } from '$app/state';
+	import CommonPanel from '$lib/components/common/CommonPanel.svelte';
+	import CommonDictation from '$lib/components/common/CommonDictation.svelte';
+	import { commonStore } from '$lib/stores/common.svelte';
 	import {
 		ChatMessages,
 		ChatScreenDragOverlay,
@@ -26,9 +29,44 @@
 		settingsStore
 	} from '$lib/stores';
 	import { parseFilesToMessageExtras } from '$lib/utils/browser-only';
-	import { onDestroy, onMount, tick } from 'svelte';
+	import { onDestroy, onMount, setContext, tick, untrack } from 'svelte';
 
 	let { showCenteredEmpty = false } = $props();
+	let chatFormRef: ChatScreenForm | undefined = $state();
+	let commonPanel: CommonPanel | undefined = $state();
+	let panelOpen = $state(false);
+	let dictationBusy = $state(false);
+	let draftEpoch = $state(0);
+	let previousDraftTarget: string | undefined;
+	let draftTarget = $derived(page.params.id ?? 'new');
+	let dictationTarget = $derived(`${draftTarget}:${draftEpoch}`);
+	$effect(() => {
+		if (draftTarget !== previousDraftTarget) {
+			previousDraftTarget = draftTarget;
+			draftEpoch++;
+		}
+	});
+	setContext('common-run-code', (code: string, kind: 'python' | 'shell') => { void commonPanel?.openCode(code, kind); });
+	$effect(() => {
+		const snapshot = commonStore.activeSnapshot;
+		if (snapshot && !snapshot.activeJob) {
+			void snapshot.version;
+			const panel = commonPanel;
+			untrack(() => { void panel?.refresh(); });
+		}
+	});
+	async function ensureConversation(): Promise<string> {
+		return conversationsStore.activeConversation?.id ?? await conversationsStore.createConversation();
+	}
+	async function refreshCommonConversation(): Promise<void> {
+		await conversationsStore.refreshActiveMessages();
+		await commonStore.refreshRuntime();
+	}
+	async function refreshCommonConnections(): Promise<void> {
+		await commonStore.refreshSession();
+		await commonStore.refreshProviders();
+		await serverStore.fetch();
+	}
 
 	let disableAutoScroll = $derived(
 		Boolean(settingsStore.config.disableAutoScroll) || deviceStore.isMobile
@@ -125,9 +163,7 @@
 
 		handleSendLikeScroll();
 
-		await chatStore.sendMessage(message, result?.extras);
-
-		return true;
+		return await chatStore.sendMessage(message, result?.extras);
 	}
 
 	let lastScrolledConversationId: string | null = null;
@@ -306,6 +342,8 @@
 			<ChatMessages
 				messages={conversationsStore.activeMessages}
 				onMessagesReady={handleMessagesReady}
+				onOpenFile={(path, revision) => commonPanel?.openFile(path, revision)}
+				onOpenExecution={(id) => commonPanel?.openExecution(id)}
 				onUserAction={() => {
 					handleSendLikeScroll();
 				}}
@@ -351,8 +389,25 @@
 				{/if}
 			</div>
 
+			<div class="pointer-events-auto mx-auto mb-2 flex w-full max-w-3xl flex-wrap items-center gap-2 text-xs">
+				<button type="button" class="rounded-md border px-3 py-1.5 hover:bg-muted" aria-expanded={panelOpen} onclick={() => commonPanel?.openSection('connections')}>Common settings</button>
+				<button type="button" class="rounded-md border px-3 py-1.5 hover:bg-muted" onclick={() => commonPanel?.openSection('files')}>Files</button>
+				<button type="button" class="rounded-md border px-3 py-1.5 hover:bg-muted" onclick={() => commonPanel?.openSection('run')}>Run</button>
+				<CommonDictation
+					targetId={dictationTarget}
+					getTargetId={() => dictationTarget}
+					getDraft={() => chatFormRef?.getDraft() ?? ''}
+					setDraft={(text) => chatFormRef?.setDraft(text)}
+					disabled={!commonStore.session?.authenticated || isCurrentConversationLoading || chatStore.isEditing()}
+					onBusyChange={(busy) => dictationBusy = busy}
+					openSettings={() => commonPanel?.openSection('dictation')}
+				/>
+				<span class="text-muted-foreground">Live updates: {commonStore.eventStatus}. Runner: {commonStore.runtime?.ready ? 'ready' : 'unavailable'}.</span>
+			</div>
 			<ChatScreenForm
+				bind:this={chatFormRef}
 				bind:uploadedFiles={fileUpload.uploadedFiles}
+				externalBusy={dictationBusy}
 				class="pointer-events-auto conversation-chat-form"
 				disabled={hasPropsError || chatStore.isEditing()}
 				{initialMessage}
@@ -365,6 +420,18 @@
 			/>
 		</div>
 	</div>
+{/if}
+
+{#if commonStore.session?.authenticated}
+	<CommonPanel
+		bind:this={commonPanel}
+		bind:open={panelOpen}
+		showTrigger={false}
+		conversationId={conversationsStore.activeConversation?.id ?? null}
+		{ensureConversation}
+		onChanged={refreshCommonConversation}
+		onConnectionsChanged={refreshCommonConnections}
+	/>
 {/if}
 
 <ChatScreenDialogsAndAlerts

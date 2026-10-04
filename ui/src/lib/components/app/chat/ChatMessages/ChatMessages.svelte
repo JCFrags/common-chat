@@ -15,9 +15,11 @@
 		messages?: DatabaseMessage[];
 		onUserAction?: () => void;
 		onMessagesReady?: (messageCount: number) => void;
+		onOpenFile?: (path: string, revision: string) => void;
+		onOpenExecution?: (id: string) => void;
 	}
 
-	let { messages = [], onMessagesReady, onUserAction }: Props = $props();
+	let { messages = [], onMessagesReady, onUserAction, onOpenFile, onOpenExecution }: Props = $props();
 
 	let allConversationMessages = $state<DatabaseMessage[]>([]);
 
@@ -251,6 +253,8 @@
 				{nextAssistantMessage}
 				{siblingInfo}
 				{toolMessages}
+				{onOpenFile}
+				{onOpenExecution}
 			/>
 		{/each}
 

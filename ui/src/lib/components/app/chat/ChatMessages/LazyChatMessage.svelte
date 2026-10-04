@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ChatMessage from './ChatMessage/ChatMessage.svelte';
+	import CommonMessageDetails from '$lib/components/common/CommonMessageDetails.svelte';
 	import { chatStore } from '$lib/stores';
 	import type { ChatMessageActions } from '$lib/types';
 
@@ -12,6 +13,8 @@
 		nextAssistantMessage?: DatabaseMessage | null;
 		siblingInfo?: ChatMessageSiblingInfo | null;
 		toolMessages?: DatabaseMessage[];
+		onOpenFile?: (path: string, revision: string) => void;
+		onOpenExecution?: (id: string) => void;
 	}
 
 	let {
@@ -22,7 +25,9 @@
 		message,
 		nextAssistantMessage = null,
 		siblingInfo = null,
-		toolMessages = []
+		toolMessages = [],
+		onOpenFile,
+		onOpenExecution
 	}: Props = $props();
 
 	// A mounted message row is a whole component tree (contexts, effects,
@@ -79,6 +84,18 @@
 			{siblingInfo}
 			{toolMessages}
 		/>
+		{#if message.common}
+			<div class="mx-auto w-full max-w-3xl">
+				<CommonMessageDetails
+					conversationId={message.convId}
+					metadata={message.common.metadata}
+					status={message.common.status}
+					error={message.common.error}
+					{onOpenFile}
+					{onOpenExecution}
+				/>
+			</div>
+		{/if}
 	{/if}
 </div>
 
