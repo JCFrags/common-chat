@@ -1,3 +1,5 @@
+import { uuid } from '$lib/utils/uuid';
+
 export interface FileMetadata {
 	path: string;
 	revision: string;
@@ -163,7 +165,7 @@ export function fileDraft(
 	key?: string
 ): FileDraft {
 	return {
-		key: key ?? file?.path ?? `new:${crypto.randomUUID()}`,
+		key: key ?? file?.path ?? `new:${uuid()}`,
 		path: file?.path ?? '',
 		isNew: !file,
 		file,
