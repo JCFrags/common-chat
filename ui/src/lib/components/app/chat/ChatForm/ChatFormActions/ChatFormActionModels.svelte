@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { ModelsSelectorDropdown, ModelsSelectorSheet } from '$lib/components/app';
+	import CommonConnectionSelector from '$lib/components/common/CommonConnectionSelector.svelte';
 	import { conversationsStore, deviceStore, modelsStore, serverStore } from '$lib/stores';
 	import { getConversationModel } from '$lib/utils';
 
@@ -27,6 +28,7 @@
 		useGlobalSelection = false
 	}: Props = $props();
 
+	let switchingConnection = $state(false);
 	let isRouter = $derived(serverStore.isRouterMode);
 	let isOffline = $derived(!!serverStore.error);
 
@@ -74,7 +76,7 @@
 	});
 
 	$effect(() => {
-		hasModelSelected = !!modelsStore.selectedModelId;
+		hasModelSelected = !switchingConnection && !modelsStore.updating && !!modelsStore.selectedModelId;
 	});
 
 	$effect(() => {
@@ -83,7 +85,9 @@
 	});
 
 	$effect(() => {
-		if (!hasModelSelected) {
+		if (switchingConnection || modelsStore.updating) {
+			submitTooltip = 'Saving connection or model selection...';
+		} else if (!hasModelSelected) {
 			submitTooltip = 'Please select a model first';
 		} else if (!isSelectedModelInCache) {
 			submitTooltip = 'Selected model is not available, please select another';
@@ -100,11 +104,13 @@
 	}
 </script>
 
+<CommonConnectionSelector bind:switching={switchingConnection} disabled={disabled || modelsStore.updating} />
+
 {#if deviceStore.isMobile}
 	<ModelsSelectorSheet
 		bind:this={selectorModelRef}
 		currentModel={selectorModel}
-		disabled={disabled || isOffline}
+		disabled={disabled || isOffline || switchingConnection}
 		{forceForegroundText}
 		{useGlobalSelection}
 	/>
@@ -112,7 +118,7 @@
 	<ModelsSelectorDropdown
 		bind:this={selectorModelRef}
 		currentModel={selectorModel}
-		disabled={disabled || isOffline}
+		disabled={disabled || isOffline || switchingConnection}
 		{forceForegroundText}
 		{useGlobalSelection}
 	/>

@@ -4,6 +4,10 @@ These components extend the imported llama Svelte interface. They use the existi
 
 See [API.md](../../../../../docs/API.md), [WORKSPACE.md](../../../../../docs/WORKSPACE.md), and [TOOLS.md](../../../../../docs/TOOLS.md) for the server contracts.
 
+## Mount chat connection selection
+
+`CommonConnectionSelector.svelte` selects a saved chat connection through `CommonStore.selectProvider`. Mount it beside the composer model picker on desktop and mobile, outside the model-catalog availability branches. It must remain available when the old connection has no models or discovery fails. Bind its `switching` state to the parent's Send and model-selection guards. A confirmed connection switch clears the selected model, not the conversation or draft. Choose a model explicitly afterward. Saving or editing a connection in the panel does not activate it for chat.
+
 ## Mount the panel
 
 Import `CommonPanel.svelte` directly. Keep one instance alive while the authenticated chat screen is mounted. This retains per-conversation file, code, and package drafts when the dialog closes or the conversation changes.
