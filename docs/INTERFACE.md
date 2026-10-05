@@ -8,13 +8,13 @@ On desktop, the sidebar can collapse to a narrow icon rail. New chat, Files/code
 
 Each chat row has a three-dot action button. Rename, export, and delete apply to that row's conversation, not an unrelated open chat. Deletion retains its explicit confirmation and idle checks.
 
-Settings groups connections, active models and refresh, generation, tools, appearance, data, and Info. The composer model button opens model selection without a top endpoint selector. Help and storage information live in Settings or related tooltips. Actual draft-storage failures, missing context, unknown-send state, and edit warnings remain visible.
+Settings groups connections, active models and refresh, generation, tools, appearance, data, and Info. The composer has a Chat connection selector beside the model button. Choose a saved connection, then choose its model. Changing the connection clears the selected model and keeps the current draft and conversation. Send is disabled while either selection is saved. The connection selector remains available when the current connection has no models or discovery fails. The model button opens model selection without a top endpoint selector. Help and storage information live in Settings or related tooltips. Actual draft-storage failures, missing context, unknown-send state, and edit warnings remain visible.
 
 File results use a single compact list. Rows show a type icon, filename, and friendly type. Download and preview bind to the exact conversation, path, and revision. Inline validated workspace links remain in the answer. Tool activity uses compact disclosures, with all recorded calls, errors, historical permissions, budgets, and full console access retained.
 
 ## Model discovery and nicknames
 
-New connections use automatic discovery from `/models`. The composer model picker lists actual API IDs. A nickname changes the display label, not the request ID, saved selection, or historical model identity. Use "Model nickname and thinking support" in the picker to save a nickname or an explicit per-model declaration.
+New connections use automatic discovery from `/models`. Saving or editing a connection does not activate it for chat. The Connection dropdown in Settings chooses a record to edit. Use Chat connection beside the composer model button to activate a saved connection. The composer model picker lists actual API IDs from that connection. A nickname changes the display label, not the request ID, saved selection, or historical model identity. Use "Model nickname and thinking support" in the picker to save a nickname or an explicit per-model declaration.
 
 Existing nonempty manual lists stay manual until you change "Model discovery" in Connections. Manual mode is available for endpoints without `/models`. Automatic discovery failures show a clear error and any saved IDs as an unverified fallback. Refresh requests a new API check. The picker retains a historical selection that is missing from the current list rather than silently replacing it.
 
