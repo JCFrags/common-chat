@@ -1,4 +1,4 @@
-import { filterFilesByModalities, isFileTypeSupported } from '$lib/utils';
+import { filterFilesByModalities, isFileTypeSupported, uuid } from '$lib/utils';
 import { uploadCommonFile, removeUnattachedUpload } from '$lib/services/common-upload';
 import { commonStore } from '$lib/stores/common.svelte';
 import { conversationsStore } from '$lib/stores/conversations/index.svelte';
@@ -36,7 +36,7 @@ export function useChatScreenFileUpload(options: UseChatScreenFileUploadOptions)
 		if (!supportedFiles.length) return;
 		if (conversationsStore.missingConversationId) { toast.error('Open an available conversation before uploading. The old draft stays saved.'); return; }
 		const original = commonStore.activeId;
-		const placeholders = supportedFiles.map((file): ChatUploadedFile => ({ id: crypto.randomUUID(), file,
+		const placeholders = supportedFiles.map((file): ChatUploadedFile => ({ id: uuid(), file,
 			name: file.name, size: file.size, type: file.type, isLoading: true }));
 		uploadedFiles = [...uploadedFiles, ...placeholders];
 		draftMessagesStore.saveDraftMessage(original ?? undefined, draftMessagesStore.getRecord(original).text, uploadedFiles);

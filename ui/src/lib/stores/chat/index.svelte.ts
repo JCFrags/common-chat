@@ -15,7 +15,7 @@ import type { DatabaseMessage, DatabaseMessageExtra } from '$lib/types/database'
 import type { ChatUploadedFile, ErrorDialogState } from '$lib/types/chat';
 import { generationSettings } from '$lib/utils/common-settings';
 import { confirmSelections } from '$lib/services/common-mcp.svelte';
-import { findDescendantMessages, generateConversationTitle } from '$lib/utils';
+import { findDescendantMessages, generateConversationTitle, uuid } from '$lib/utils';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 import { toast } from 'svelte-sonner';
 
@@ -111,7 +111,7 @@ class ChatStore {
 				commonStore.activeId !== id || !commonStore.session?.authenticated) {
 				throw new Error('The connection, model or conversation changed. Review the target before sending.');
 			}
-			const body: CommonGeneration = { requestId: crypto.randomUUID(), expectedVersion: snapshot.version,
+			const body: CommonGeneration = { requestId: uuid(), expectedVersion: snapshot.version,
 				providerId, model, ...turn, settings, tools: { ...tools, ...(mcp.selections.length ? { mcp: mcp.selections } : {}) } };
 			const saved = draftMessagesStore.persistRequest(id, body, composer);
 			return await this.postExact(id, saved);
