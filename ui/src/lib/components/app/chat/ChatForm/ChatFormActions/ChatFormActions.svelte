@@ -15,11 +15,13 @@
 	import { ChatService } from '$lib/services';
 	import { chatStore, conversationsStore, settingsStore } from '$lib/stores';
 	import { getFileTypeCategory } from '$lib/utils';
+	import type { Snippet } from 'svelte';
 
 	interface Props {
 		canSend?: boolean;
 		canSubmit?: boolean;
 		class?: string;
+		composerActions?: Snippet;
 		disabled?: boolean;
 		isLoading?: boolean;
 		isReasoning?: boolean;
@@ -38,6 +40,7 @@
 		canSend = false,
 		canSubmit = false,
 		class: className = '',
+		composerActions,
 		disabled = false,
 		isLoading = false,
 		isReasoning = false,
@@ -145,16 +148,17 @@
 </script>
 
 <div
-	class="flex w-full items-center gap-3 {className} {showAddButton ? '' : 'justify-end'}"
+	class="flex w-full flex-wrap items-center gap-2 {className} {showAddButton ? '' : 'justify-end'}"
 	style="container-type: inline-size"
 >
 	{#if showAddButton}
-		<div class="mr-auto flex items-center gap-2">
+		<div class="mr-auto flex items-center gap-1 {composerActions ? 'w-full md:w-auto' : ''}">
 			<ChatFormActionsAdd />
+			{@render composerActions?.()}
 		</div>
 	{/if}
 
-	<div class="flex items-center gap-1.5">
+	<div class="ml-auto flex min-w-0 items-center gap-1.5">
 		{#if hasProcessedTokens}
 			<ChatFormContextGauge />
 		{/if}

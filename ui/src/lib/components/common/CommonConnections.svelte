@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { Button } from '$lib/components/ui/button';
+	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Input } from '$lib/components/ui/input';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { onMount } from 'svelte';
@@ -32,7 +33,7 @@
 	let catalogTicket = 0;
 	const provider = $derived(providers.find((item) => item.id === selectedId));
 	const selectClass =
-		'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-ring';
+		'h-9 w-full rounded-lg border border-input bg-background/50 px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 	const boolCaps = [
 		['streaming', 'Streaming responses'],
 		['systemPrompt', 'System prompt'],
@@ -218,11 +219,14 @@
 </script>
 
 <section class="space-y-4" aria-label="Common connections">
-	<p class="text-sm text-muted-foreground">
-		Connections and encrypted credentials stay on the Common server. This editor never reads or
-		exports saved keys. Capability declarations must match your endpoint. They are not tested or
-		inferred from model names.
-	</p>
+	<details class="rounded-xl border border-border/30 bg-muted/20 p-3">
+		<summary class="cursor-pointer text-sm font-medium">Connection help</summary>
+		<p class="mt-3 text-sm text-muted-foreground">
+			Connections and encrypted credentials stay on the Common server. This editor never reads or
+			exports saved keys. Capability declarations must match your endpoint. They are not tested or
+			inferred from model names. Saving does not change the chat selection. Choose the chat connection beside the composer model button.
+		</p>
+	</details>
 	<div class="flex items-end gap-2">
 		<label class="grid flex-1 gap-1 text-sm"
 			>Connection<select
@@ -238,7 +242,7 @@
 		<Button variant="ghost" disabled={saving || loading} onclick={loadProviders}>Reload</Button>
 	</div>
 	<form
-		class="space-y-4"
+		class="space-y-4 rounded-xl border border-border/30 bg-muted/20 p-4"
 		onsubmit={(e) => {
 			e.preventDefault();
 			void save();
@@ -270,7 +274,7 @@
 				/></label
 			>
 			<label class="flex items-center gap-2 text-sm"
-				><input type="checkbox" bind:checked={clearKey} /> Explicitly clear the saved key</label
+				><Checkbox bind:checked={clearKey} aria-label="Clear saved key" /> Clear saved key</label
 			>
 			<div class="grid gap-3 sm:grid-cols-2">
 				<label class="grid gap-1 text-sm"
@@ -301,16 +305,16 @@
 				Automatic discovery calls /models even when fallback IDs exist. Manual IDs and cached
 				catalogs do not prove reachability. Saving these fields does not change the chat selection.
 			</p>
-			<details class="rounded-md border p-3">
+			<details class="rounded-xl border border-border/30 bg-background/50 p-3">
 				<summary class="cursor-pointer text-sm font-medium"
 					>Endpoint capability declarations</summary
 				>
 				<div class="mt-3 grid gap-2 sm:grid-cols-2">
 					{#each boolCaps as [cap, title]}<label class="flex items-center gap-2 text-sm"
-							><input
-								type="checkbox"
+							><Checkbox
+								aria-label={title}
 								checked={caps[cap] === true}
-								onchange={(e) => (caps[cap] = e.currentTarget.checked)}
+								onCheckedChange={(checked) => (caps[cap] = checked)}
 							/>{title}</label
 						>{/each}
 				</div>
@@ -359,14 +363,14 @@
 	{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
 	{#if status}<p role="status" class="text-sm">{status}</p>{/if}
 	{#if provider}
-		<section class="space-y-3 rounded-lg border p-3" aria-label="Model catalog and profiles">
+		<section class="space-y-3 rounded-xl border border-border/30 bg-muted/20 p-4" aria-label="Model catalog and profiles">
 			<div class="flex flex-wrap items-center gap-2">
 				<h3 class="flex-1 text-sm font-medium">Model catalog and declarations</h3>
 				<Button
 					size="sm"
 					variant="ghost"
 					disabled={catalogLoading || saving || profileSaving}
-					onclick={() => loadCatalog(true)}>Refresh discovery</Button
+					onclick={() => loadCatalog(true)}>Refresh</Button
 				>
 			</div>
 			<p class="text-sm" role="status">
@@ -436,7 +440,7 @@
 							?.source || 'unavailable'}.
 					</p>{/if}
 				<Button type="submit" size="sm" disabled={!profileModel.trim() || profileSaving || saving}
-					>{profileSaving ? 'Saving...' : 'Save nickname and declaration'}</Button
+					>{profileSaving ? 'Saving...' : 'Save model'}</Button
 				>
 			</form>
 			{#if profileError}<p role="alert" class="text-sm text-destructive">{profileError}</p>{/if}

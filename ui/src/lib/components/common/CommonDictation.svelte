@@ -1,5 +1,9 @@
 <script lang="ts">
-	import { Button } from '$lib/components/ui/button';
+	import { Mic, X } from '@lucide/svelte';
+	import { ActionIcon } from '$lib/components/app';
+	import { Button, buttonVariants } from '$lib/components/ui/button';
+	import * as Popover from '$lib/components/ui/popover';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 	import { onMount } from 'svelte';
 	import {
 		api,
@@ -18,7 +22,6 @@
 		open?: boolean;
 		disabled?: boolean;
 		onBusyChange?: (busy: boolean) => void;
-		openSettings?: () => void;
 	}
 	let {
 		targetId,
@@ -27,8 +30,7 @@
 		getTargetId,
 		open = $bindable(false),
 		disabled = false,
-		onBusyChange = () => {},
-		openSettings
+		onBusyChange = () => {}
 	}: Props = $props();
 	type Phase =
 		| 'idle'
@@ -186,7 +188,7 @@
 			selection = session.settings.dictation ?? null;
 			service = selection
 				? `${providers.find((p) => p.id === selection?.providerId)?.name ?? 'Saved connection'} · ${selection.model}`
-				: 'Dictation is not configured. Select a speech connection and model in Common settings.';
+				: 'Dictation is not configured. Configure it in Settings, Dictation.';
 		} catch (e) {
 			if (ticket === settingsTicket) {
 				selection = null;
@@ -443,22 +445,31 @@
 	});
 </script>
 
-<Button
-	variant="ghost"
-	size="sm"
-	{disabled}
-	aria-label="Speech-to-text dictation"
-	aria-expanded={open}
-	onclick={() => (open = !open)}>Dictation</Button
->
-{#if open}
-	<section
-		class="w-full space-y-3 rounded-xl border bg-background p-4"
+<Popover.Root bind:open>
+	<Tooltip.Root>
+		<Tooltip.Trigger>
+			{#snippet child({ props })}
+				<Popover.Trigger {...props} class={buttonVariants({ variant: 'ghost', size: 'icon' }) + ' h-8 w-8 rounded-full'} {disabled} aria-label="Speech-to-text dictation">
+					<Mic class="size-4" />
+				</Popover.Trigger>
+			{/snippet}
+		</Tooltip.Trigger>
+		<Tooltip.Content>Dictation</Tooltip.Content>
+	</Tooltip.Root>
+	<Popover.Content
+		align="start"
+		side="top"
+		sideOffset={12}
+		trapFocus={false}
+		preventScroll={false}
+		onOpenAutoFocus={(event) => event.preventDefault()}
+		onInteractOutside={(event) => { if (busy) event.preventDefault(); }}
+		class="w-[min(28rem,calc(100vw-2rem))] max-h-[75dvh] space-y-3 overflow-y-auto rounded-2xl border-border/30 bg-background/95 p-4 shadow-xl backdrop-blur-xl"
 		aria-label="Dictation review"
 	>
 		<div class="flex items-center justify-between">
 			<h3 class="text-sm font-medium">Dictation</h3>
-			<Button variant="ghost" size="sm" onclick={() => (open = false)}>Close</Button>
+			<ActionIcon icon={X} ariaLabel="Close dictation" tooltip="Close dictation" onclick={() => (open = false)} />
 		</div>
 		<p class="text-sm">{loading ? 'Loading saved speech selection...' : service}</p>
 		{#if recordReason}<p class="text-xs text-muted-foreground">{recordReason}</p>{/if}
@@ -514,14 +525,7 @@
 				disabled={disabled || phase !== 'review' || !operation?.clip}
 				onclick={transcribe}>Transcribe</Button
 			><Button variant="ghost" size="sm" disabled={!busy} onclick={() => cancel()}>Cancel</Button
-			>{#if openSettings}<Button
-					variant="ghost"
-					size="sm"
-					onclick={() => {
-						open = false;
-						openSettings?.();
-					}}>Dictation settings</Button
-				>{/if}
+			>
 		</div>
 		<p class="text-xs text-muted-foreground">
 			Record up to 60 seconds or choose a clip up to 10 MiB. Transcribe uploads audio using
@@ -529,5 +533,5 @@
 			billing rules apply. Cancel aborts transport and prevents late insertion. Dictation never
 			sends a chat turn.
 		</p>
-	</section>
-{/if}
+	</Popover.Content>
+</Popover.Root>

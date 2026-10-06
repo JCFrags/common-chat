@@ -29,16 +29,16 @@
 	}
 </script>
 
-<div class="sticky bottom-0 mx-auto mt-4 flex w-full justify-between pb-4 md:pb-0">
+<div class="flex w-full shrink-0 flex-wrap items-center justify-between gap-2 border-t border-border/30 bg-background/95 px-4 py-3 backdrop-blur-md md:px-6">
 	<div class="flex gap-2">
-		<Button onclick={handleResetClick} variant="outline">
+		<Button onclick={handleResetClick} variant="ghost" size="sm">
 			<RotateCcw class="h-3 w-3" />
 
-			Reset to default
+			Reset preferences
 		</Button>
 	</div>
 
-	<Button onclick={handleSave}>Save settings</Button>
+	<Button onclick={handleSave} size="sm">Save preferences</Button>
 </div>
 
 <AlertDialog.Root bind:open={showResetDialog}>
@@ -47,9 +47,8 @@
 			<AlertDialog.Title>Reset Settings to Default</AlertDialog.Title>
 
 			<AlertDialog.Description>
-				Are you sure you want to reset all settings to their default values? This will reset all
-				parameters to the values provided by the server's /props endpoint and remove all your custom
-				configurations.
+				Reset device preferences and generation parameters to the server defaults? This removes
+				your device overrides. Saved connections, credentials, dictation, and MCP choices are not reset.
 			</AlertDialog.Description>
 		</AlertDialog.Header>
 

@@ -5,10 +5,11 @@
 	import { useDraftMessages } from '$lib/hooks/use-draft-messages.svelte';
 	import { chatStore, deviceStore } from '$lib/stores';
 	import { draftMessagesStore } from '$lib/stores/chat/drafts.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, type Snippet } from 'svelte';
 
 	interface Props {
 		class?: string;
+		composerActions?: Snippet;
 		disabled?: boolean;
 		externalBusy?: boolean;
 		initialMessage?: string;
@@ -24,6 +25,7 @@
 
 	let {
 		class: className,
+		composerActions,
 		disabled = false,
 		externalBusy = false,
 		initialMessage = '',
@@ -192,6 +194,7 @@
 		bind:uploadedFiles
 		bind:value={message}
 		class="mx-auto max-w-3xl {className}"
+		{composerActions}
 		disabled={disabled || externalBusy || submitting}
 		inputDisabled={disabled}
 		{isLoading}

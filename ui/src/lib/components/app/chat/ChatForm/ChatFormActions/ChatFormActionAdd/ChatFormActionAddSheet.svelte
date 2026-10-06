@@ -9,7 +9,6 @@
 		MessageSquare,
 		PencilRuler
 	} from '@lucide/svelte';
-	import { McpLogo } from '$lib/components/app';
 	import { Checkbox } from '$lib/components/ui/checkbox';
 	import * as Collapsible from '$lib/components/ui/collapsible';
 	import * as Sheet from '$lib/components/ui/sheet';
@@ -75,7 +74,7 @@
 				<Sheet.Title>Add to chat</Sheet.Title>
 
 				<Sheet.Description class="sr-only">
-					Add files, system prompt or configure MCP servers
+					Add files, a system prompt, or inspect tool availability
 				</Sheet.Description>
 			</Sheet.Header>
 
@@ -227,19 +226,6 @@
 						</Collapsible.Content>
 					</Collapsible.Root>
 				{/if}
-
-				<button
-					class={sheetItemClass}
-					onclick={() => {
-						sheetOpen = false;
-						chatFormActions.onMcpSettingsClick?.();
-					}}
-					type="button"
-				>
-					<McpLogo class="inline {ICON_CLASS_DEFAULT} shrink-0" />
-
-					<span>MCP Servers</span>
-				</button>
 			</div>
 		</Sheet.Content>
 	</Sheet.Root>

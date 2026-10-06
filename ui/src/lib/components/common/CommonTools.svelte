@@ -18,20 +18,19 @@
 	onMount(() => { void refresh(); });
 </script>
 
-<section class="space-y-3" aria-label="Native function tools">
+<section class="space-y-3 rounded-xl border border-border/30 bg-muted/20 p-4" aria-label="Native function tools">
 	<div class="flex items-center justify-between gap-2">
-		<h3 class="font-medium">Native function tools</h3>
-		<Button variant="outline" size="sm" disabled={checking} onclick={refresh}>
-			{checking ? 'Checking...' : 'Refresh availability'}
+		<h3 class="text-sm font-medium">Native tools</h3>
+		<Button variant="ghost" size="sm" disabled={checking} onclick={refresh}>
+			{checking ? 'Checking...' : 'Refresh'}
 		</Button>
 	</div>
-	<p class="text-sm">
-		{#if enabled}Function tools are enabled for {commonStore.selectedProvider?.name}.
-		{:else}Choose a saved connection with function tools enabled to use these tools.{/if}
-		Each new turn checks the connection and runner. Available native tools are automatic, not per-turn selections.
+	<p class="text-xs text-muted-foreground">
+		{#if enabled}Available automatically for {commonStore.selectedProvider?.name}.
+		{:else}Choose a connection with function tools enabled.{/if}
 	</p>
 	{#each tools as tool (tool.name)}
-		<details class="rounded-md border border-border/40 p-2 text-sm">
+		<details class="rounded-xl border border-border/30 bg-background/50 p-3 text-sm">
 			<summary class="cursor-pointer">
 				{tool.title || tool.name} · {enabled && tool.available ? 'available' : 'unavailable'}
 			</summary>
@@ -44,9 +43,9 @@
 	{#each commonStore.runtime?.blockedReasons ?? [] as reason}
 		<p class="text-sm text-muted-foreground">{reason}</p>
 	{/each}
-	<p class="text-xs text-muted-foreground">
-		Saved receipts do not authorize new calls. Manual code Run requires source review. Manual package changes require separate consent.
-		Native tool budgets are off unless set in generation settings. Native calls cannot use host working directories or execute code in the browser.
-	</p>
+	<details class="text-xs text-muted-foreground">
+		<summary class="cursor-pointer">Native tool help</summary>
+		<p class="mt-2">Each new turn checks the connection and runner. Available native tools are automatic, not per-turn selections. Saved receipts do not authorize new calls. Manual code Run requires source review. Manual package changes require separate consent. Native tool budgets are off unless set in generation settings. Native calls cannot use host working directories or execute code in the browser.</p>
+	</details>
 	{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 </section>
