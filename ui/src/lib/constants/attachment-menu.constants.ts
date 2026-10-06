@@ -52,4 +52,4 @@ export const ATTACHMENT_FILE_ITEMS: AttachmentMenuItem[] = [
 	}
 ];
 
-export const ATTACHMENT_TOOLTIP_TEXT = 'Add files, prompts, tools or MCP Servers';
+export const ATTACHMENT_TOOLTIP_TEXT = 'Add files, prompts, or inspect tools';

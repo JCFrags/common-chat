@@ -2,8 +2,7 @@
 	import { File, Image, MessageSquare, Mic, Plus, Video } from '@lucide/svelte';
 	import {
 		ChatFormActionAddReasoningSubmenu,
-		ChatFormActionAddToolsSubmenu,
-		McpLogo
+		ChatFormActionAddToolsSubmenu
 	} from '$lib/components/app';
 	import { buttonVariants } from '$lib/components/ui/button';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu';
@@ -144,15 +143,6 @@
 			</DropdownMenu.Item>
 
 			<ChatFormActionAddToolsSubmenu />
-
-			<DropdownMenu.Item
-				class="flex cursor-pointer items-center gap-2"
-				onclick={chatFormActions.onMcpSettingsClick}
-			>
-				<McpLogo class={ICON_CLASS_DEFAULT} />
-
-				<span>MCP Servers</span>
-			</DropdownMenu.Item>
 		</DropdownMenu.Content>
 	</DropdownMenu.Root>
 </div>

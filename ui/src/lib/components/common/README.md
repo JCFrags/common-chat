@@ -6,7 +6,15 @@ See [API.md](../../../../../docs/API.md), [WORKSPACE.md](../../../../../docs/WOR
 
 ## Mount chat connection selection
 
-`CommonConnectionSelector.svelte` selects a saved chat connection through `CommonStore.selectProvider`. Mount it beside the composer model picker on desktop and mobile, outside the model-catalog availability branches. It must remain available when the old connection has no models or discovery fails. Bind its `switching` state to the parent's Send and model-selection guards. A confirmed connection switch clears the selected model, not the conversation or draft. Choose a model explicitly afterward. Saving or editing a connection in the panel does not activate it for chat.
+`CommonConnectionSelector.svelte` selects a saved chat connection through `CommonStore.selectProvider`. Mount it beside the composer model picker on desktop and mobile, outside the model-catalog availability branches. It must remain available when the old connection has no models or discovery fails. Bind its `switching` state to the parent's Send and model-selection guards. A confirmed connection switch clears the selected model, not the conversation or draft. Choose a model explicitly afterward. Saving or editing a connection in Settings does not activate it for chat. The selector uses upstream Select and Tooltip primitives with the same saved raw IDs and confirmed-selection guards.
+
+## Mount Settings
+
+The sidebar owns the single `DialogSettingsChat`. Extend the Settings registry and `SettingsChat` custom branches, not a second modal or opener store. Connections mounts `CommonConnections`, Dictation mounts `CommonDictationSettings`, Tools mounts `CommonTools` and `CommonMcp`, and Info mounts `CommonInfo` for status, help, and Sign out.
+
+After confirmed Common form saves, refresh `commonStore.refreshSession()`, `commonStore.refreshProviders()`, and `serverStore.fetch()`. Keep upstream `apiKey` and `mcpServers` fields filtered out of preference fields and saved device configuration. API and Info sections do not show the global preference Save/Reset footer. Device preference fields retain their saved keys and existing slugs.
+
+The Settings dialog has a fixed header, an independently scrolling body, and a separate preference footer. Do not return the footer to sticky positioning inside the field list. Use one close control. If `Dialog.Content` enables `showCloseButton`, set `Dialog.Header` to `showCloseButton={false}` because the header adds a close control by default.
 
 ## Mount the panel
 
@@ -20,17 +28,18 @@ Required props:
 Callbacks:
 
 - `onChanged: () => Promise<void> | void`. Refresh authoritative conversation state after confirmed file or execution changes.
-- `onConnectionsChanged: () => Promise<void> | void`. Refresh providers and preferences after connection, profile, or dictation selection changes.
 
 Optional props are `bind:open`, `showTrigger` (default `true`), and `initialSection` (default `files`). `bind:this` exposes:
 
 ```ts
-openSection(section: 'connections' | 'dictation' | 'tools' | 'files' | 'run'): void
+openSection(section: 'files' | 'run'): void
 openFile(path: string, revision?: string): Promise<void>
 openExecution(id: string): Promise<void>
 openCode(source: string, kind?: 'python' | 'shell'): Promise<boolean>
 refresh(): Promise<void>
 ```
+
+The panel is titled Files and code and has only Files and Run tabs. Connection, dictation, native-tool, and MCP settings belong to Settings. Composer workspace actions pass through the existing `ChatScreenForm`, `ChatForm`, and `ChatFormActions` with a `composerActions` snippet, not an event bus.
 
 `openCode` only prepares an editor for review. It does not execute code or change package consent. Call `refresh()` after relevant snapshot or workspace events. Closing the dialog stops execution polling, not server work. Destroy the panel on sign-out.
 
@@ -48,7 +57,7 @@ setContext('common-run-code', (code: string, kind: 'python' | 'shell') => {
 
 `CommonTools.svelte` shows the native catalog and effective availability for the selected connection. Native tools remain automatic on compatible saved connections. It does not introduce per-turn native checkboxes.
 
-`CommonMcp.svelte` manages server-owned HTTP connections and page-only tool choices. Mount it in Settings, Tools, or the Common panel. Saving a connection does not connect it. Connect explicitly discovers a catalog. Edit, disconnect, catalog replacement, and sign-out clear its selections.
+`CommonMcp.svelte` manages server-owned HTTP connections and page-only tool choices. Mount it only in Settings, Tools. Do not mount the upstream browser-owned MCP Servers dialog or its composer menu entries. Saving a connection does not connect it. Connect explicitly discovers a catalog. Edit, disconnect, catalog replacement, and sign-out clear its selections.
 
 The chat adapter calls `confirmSelections` from `$lib/services/common-mcp.svelte` before each new submission. The helper checks local catalog freshness without contacting an MCP server. The adapter confirms the fixed tool names and destinations, rechecks the provider/model/conversation target, and freezes `tools.mcp` into the exact request. Retry uses the stored whole request without reselection. Call `commonMcpState.reset()` on sign-out. Do not persist live choices separately or convert saved receipts into new grants. See [MCP.md](../../../../../docs/MCP.md) for transport and access limits.
 
@@ -69,7 +78,7 @@ Use a target identity that includes the route/conversation and a draft epoch. Ch
 
 Set `onBusyChange` to update the composer's `externalBusy`. Block Send and draft-target replacement while a clip is prepared or an operation is active. Keep normal typed text editable. Do not pass that dictation busy value back as `disabled`, which would cancel the operation. `disabled` is for external authentication or chat-action unavailability.
 
-Optional props are `bind:open` and `openSettings`. Route `openSettings` to `commonPanel.openSection('dictation')`. The component exports `cancel()` and `stopRecording()`. Destroy it or call `cancel()` on sign-out. Close and target changes abort transport, release capture and playback resources, and prevent insertion.
+The optional prop is `bind:open`. The component uses an upstream Popover for floating clip review. Disable its focus trap and suppress outside dismissal while a clip or operation exists so typed composer text remains editable. Close and Escape still cancel. Missing configuration directs the user to Settings, Dictation, without another settings shortcut. The component exports `cancel()` and `stopRecording()`. Destroy it or call `cancel()` on sign-out. Close and target changes abort transport, release capture and playback resources, and prevent insertion.
 
 The component reads the saved atomic speech provider/model pair from `/api/session`. It never uses chat model selection. File selection and recording do not upload audio. Transcribe is explicit. Recording stops at 60 seconds. Clips must fit 10 MiB. Cancellation does not prove that provider processing or billing stopped.
 

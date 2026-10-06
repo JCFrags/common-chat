@@ -35,7 +35,7 @@
 	}
 </script>
 
-<div class="flex flex-col bg-background md:hidden sticky top-13 z-50">
+<div class="flex shrink-0 flex-col bg-background/95 backdrop-blur-md md:hidden">
 	<div class="border-b border-border/30">
 		<ScrollCarousel alwaysShowArrows {carousel} containerClass="py-2" innerClass="gap-2">
 			{#each sections as section (section.title)}
@@ -45,6 +45,7 @@
 					)
 						? 'bg-accent text-accent-foreground'
 						: 'text-muted-foreground'}"
+					aria-current={isActive(section) ? 'page' : undefined}
 					{...{ [UI_DATA_ATTRS.ACTIVE]: isActive(section) }}
 					onclick={(e: MouseEvent) => {
 						onSectionChange?.(section.title);

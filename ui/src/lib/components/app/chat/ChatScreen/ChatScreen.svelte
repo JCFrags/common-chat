@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { FolderOpen, Terminal } from '@lucide/svelte';
+	import { ActionIcon } from '$lib/components/app';
 	import ChatScreenActionScrollDown from './ChatScreenActionScrollDown.svelte';
 	import ChatScreenDialogsAndAlerts from './ChatScreenDialogsAndAlerts.svelte';
 	import ChatScreenGreeting from './ChatScreenGreeting.svelte';
@@ -45,7 +47,9 @@
 	function invalidateDictationTarget() {
 		untrack(() => {
 			draftEpoch++;
-			dictation?.cancel('The target draft changed. No transcript was added.');
+			dictation?.cancel(dictationBusy
+				? 'The target draft changed. No transcript was added.'
+				: 'Record or choose a clip, review it, then select Transcribe.');
 		});
 	}
 	beforeNavigate((navigation) => {
@@ -72,11 +76,6 @@
 	async function refreshCommonConversation(): Promise<void> {
 		await conversationsStore.refreshActiveMessages();
 		await commonStore.refreshRuntime();
-	}
-	async function refreshCommonConnections(): Promise<void> {
-		await commonStore.refreshSession();
-		await commonStore.refreshProviders();
-		await serverStore.fetch();
 	}
 
 	let disableAutoScroll = $derived(
@@ -325,6 +324,20 @@
 	onDestroy(() => autoScroll.destroy());
 </script>
 
+{#snippet composerActions()}
+	<ActionIcon icon={FolderOpen} iconSize="size-4" class="h-8 w-8 rounded-full hover:bg-foreground/10!" ariaLabel="Files" tooltip="Conversation files" onclick={() => commonPanel?.openSection('files')} />
+	<ActionIcon icon={Terminal} iconSize="size-4" class="h-8 w-8 rounded-full hover:bg-foreground/10!" ariaLabel="Run code" tooltip="Review and run code" onclick={() => commonPanel?.openSection('run')} />
+	<CommonDictation
+		bind:this={dictation}
+		targetId={dictationTarget}
+		getTargetId={() => dictationTarget}
+		getDraft={() => chatFormRef?.getDraft() ?? ''}
+		setDraft={(text) => chatFormRef?.setDraft(text)}
+		disabled={!commonStore.session?.authenticated || isCurrentConversationLoading || chatStore.isEditing()}
+		onBusyChange={(busy) => dictationBusy = busy}
+	/>
+{/snippet}
+
 {#if dragAndDrop.isDragOver}
 	<ChatScreenDragOverlay />
 {/if}
@@ -404,26 +417,11 @@
 				{/if}
 			</div>
 
-			<div class="pointer-events-auto mx-auto mb-2 flex w-full max-w-3xl flex-wrap items-center gap-2 text-xs">
-				<button type="button" class="rounded-md border px-3 py-1.5 hover:bg-muted" aria-expanded={panelOpen} onclick={() => commonPanel?.openSection('connections')}>Common settings</button>
-				<button type="button" class="rounded-md border px-3 py-1.5 hover:bg-muted" onclick={() => commonPanel?.openSection('files')}>Files</button>
-				<button type="button" class="rounded-md border px-3 py-1.5 hover:bg-muted" onclick={() => commonPanel?.openSection('run')}>Run</button>
-				<CommonDictation
-					bind:this={dictation}
-					targetId={dictationTarget}
-					getTargetId={() => dictationTarget}
-					getDraft={() => chatFormRef?.getDraft() ?? ''}
-					setDraft={(text) => chatFormRef?.setDraft(text)}
-					disabled={!commonStore.session?.authenticated || isCurrentConversationLoading || chatStore.isEditing()}
-					onBusyChange={(busy) => dictationBusy = busy}
-					openSettings={() => commonPanel?.openSection('dictation')}
-				/>
-				<span class="text-muted-foreground">Live updates: {commonStore.eventStatus}. Runner: {commonStore.runtime?.ready ? 'ready' : 'unavailable'}.</span>
-			</div>
 			<ChatScreenForm
 				bind:this={chatFormRef}
 				bind:uploadedFiles={fileUpload.uploadedFiles}
 				externalBusy={dictationBusy}
+				{composerActions}
 				class="pointer-events-auto conversation-chat-form"
 				disabled={hasPropsError || chatStore.isEditing()}
 				{initialMessage}
@@ -447,7 +445,6 @@
 		conversationId={conversationsStore.activeConversation?.id ?? null}
 		{ensureConversation}
 		onChanged={refreshCommonConversation}
-		onConnectionsChanged={refreshCommonConnections}
 	/>
 {/if}
 

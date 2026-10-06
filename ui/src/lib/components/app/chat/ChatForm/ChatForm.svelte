@@ -8,8 +8,7 @@
 		ChatFormInputFileInputInvisible,
 		ChatFormMcpResourcesList,
 		ChatFormPickers,
-		DialogMcpResourcesBrowser,
-		DialogMcpServers
+		DialogMcpResourcesBrowser
 	} from '$lib/components/app';
 	import {
 		CLIPBOARD_CONTENT_QUOTE_PREFIX,
@@ -61,7 +60,7 @@
 		createAudioFile,
 		isAudioRecordingSupported
 	} from '$lib/utils/browser-only';
-	import { onMount } from 'svelte';
+	import { onMount, type Snippet } from 'svelte';
 
 	interface Props {
 		// Data
@@ -71,6 +70,7 @@
 
 		// UI State
 		class?: string;
+		composerActions?: Snippet;
 		disabled?: boolean;
 		inputDisabled?: boolean;
 		isLoading?: boolean;
@@ -92,6 +92,7 @@
 	let {
 		attachments = [],
 		class: className = '',
+		composerActions,
 		disabled = false,
 		inputDisabled,
 		isLoading = false,
@@ -193,9 +194,6 @@
 	// Resource Dialog State
 	let isResourceDialogOpen = $state(false);
 	let preSelectedResourceUri = $state<string | undefined>(undefined);
-
-	// MCP Servers Dialog State
-	let isMcpServersDialogOpen = $state(false);
 
 	let currentConfig = $derived(settingsStore.config);
 
@@ -631,7 +629,7 @@
 				isReasoning={chatStore.isReasoning}
 				{isRecording}
 				onFileUpload={handleFileUpload}
-				onMcpSettingsClick={() => (isMcpServersDialogOpen = true)}
+				{composerActions}
 				onMicClick={handleMicClick}
 				{onStop}
 				onSystemPromptClick={() => onSystemPromptClick?.({ files: uploadedFiles, message: value })}
@@ -670,5 +668,3 @@
 	}}
 	preSelectedUri={preSelectedResourceUri}
 />
-
-<DialogMcpServers bind:open={isMcpServersDialogOpen} />

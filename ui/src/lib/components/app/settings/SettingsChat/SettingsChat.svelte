@@ -17,6 +17,9 @@
 	import { ColorMode } from '$lib/enums/ui.enums';
 	import { modelsStore, serverStore, settingsStore } from '$lib/stores';
 	import { commonStore } from '$lib/stores/common.svelte';
+	import CommonConnections from '$lib/components/common/CommonConnections.svelte';
+	import CommonDictationSettings from '$lib/components/common/CommonDictationSettings.svelte';
+	import CommonInfo from '$lib/components/common/CommonInfo.svelte';
 	import CommonTools from '$lib/components/common/CommonTools.svelte';
 	import CommonMcp from '$lib/components/common/CommonMcp.svelte';
 	import { generationSettings } from '$lib/utils/common-settings';
@@ -49,7 +52,14 @@
 			SETTINGS_CHAT_SECTIONS[0]
 	);
 
-	let localConfig: SettingsConfigType = $state({ ...settingsStore.config });
+	let localConfig: SettingsConfigType = $state(sanitizeDeviceConfig(settingsStore.config));
+	let preferenceSection = $derived(Boolean(currentSection.fields?.length) && currentSection.slug !== SETTINGS_SECTION_SLUGS.TOOLS);
+
+	async function refreshCommonConnections(): Promise<void> {
+		await commonStore.refreshSession();
+		await commonStore.refreshProviders();
+		await serverStore.fetch();
+	}
 
 	let mobileHeader: { updateCarousel: () => void } | undefined;
 
@@ -98,7 +108,7 @@
 			}
 		}
 
-		const processedConfig = { ...localConfig };
+		const processedConfig = { ...sanitizeDeviceConfig(localConfig) };
 
 		for (const field of NUMERIC_FIELDS) {
 			if (processedConfig[field] !== undefined && processedConfig[field] !== '') {
@@ -132,58 +142,57 @@
 	}
 </script>
 
-<div in:fade={{ duration: 150 }} class="mx-auto flex h-full w-full flex-col">
-	<div class="flex flex-1 flex-col md:flex-row md:gap-4">
-		<SettingsChatDesktopSidebar
-			isActive={(section: SettingsSection) => section.slug === activeSlug}
-			onSectionChange={handleSectionChange}
-			sections={SETTINGS_CHAT_SECTIONS}
-		/>
+<div in:fade={{ duration: 150 }} class="flex min-h-0 w-full flex-1 flex-col md:flex-row">
+	<SettingsChatDesktopSidebar
+		isActive={(section: SettingsSection) => section.slug === activeSlug}
+		onSectionChange={handleSectionChange}
+		sections={SETTINGS_CHAT_SECTIONS}
+	/>
 
-		<SettingsChatMobileHeader
-			bind:this={mobileHeader}
-			isActive={(section: SettingsSection) => section.slug === activeSlug}
-			onSectionChange={handleSectionChange}
-			sections={SETTINGS_CHAT_SECTIONS}
-		/>
+	<SettingsChatMobileHeader
+		bind:this={mobileHeader}
+		isActive={(section: SettingsSection) => section.slug === activeSlug}
+		onSectionChange={handleSectionChange}
+		sections={SETTINGS_CHAT_SECTIONS}
+	/>
 
-		<div class="mx-auto max-w-2xl px-4 flex-1 md:mt-4">
-			<div class="space-y-6 pt-3">
-				<div class="grid">
-					{#if currentSection.slug === SETTINGS_SECTION_SLUGS.TOOLS}
-						<div class="space-y-6">
-							<CommonTools />
-							<CommonMcp />
-						</div>
-					{:else if currentSection.slug === SETTINGS_SECTION_SLUGS.IMPORT_EXPORT}
-						<SettingsChatImportExportTab />
-					{:else if currentSection.fields}
-						<div class="space-y-6">
-							<SettingsChatFields
-								fields={currentSection.fields.filter((field) => field.key !== 'apiKey' && field.key !== 'mcpServers')}
-								{localConfig}
-								onConfigChange={handleConfigChange}
-								onThemeChange={handleThemeChange}
-							/>
-
-							{#if currentSection.slug === SETTINGS_SECTION_SLUGS.GENERAL}
-								<div class="flex justify-end">
-									<Button onclick={() => window.location.reload()} variant="outline">
-										<RefreshCw class="h-3 w-3" />
-										Reload app
-									</Button>
-								</div>
-							{/if}
-						</div>
-					{/if}
-				</div>
-
-				<div class="mt-8 border-t border-border/30 pt-6">
-					<p class="text-xs text-muted-foreground">Display and typed generation preferences are device-local. Connection keys stay encrypted on Common. Unsupported sampling fields are rejected. Blank values defer to the connection. Catalog availability does not prove that inference is ready.</p>
-				</div>
+	<div class="flex min-h-0 min-w-0 flex-1 flex-col">
+		<div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-5 md:px-6">
+			<div class="mx-auto w-full max-w-2xl space-y-5">
+				<h2 class="text-base font-medium">{currentSection.title}</h2>
+				{#if currentSection.slug === SETTINGS_SECTION_SLUGS.CONNECTIONS}
+					<CommonConnections onChanged={refreshCommonConnections} />
+				{:else if currentSection.slug === SETTINGS_SECTION_SLUGS.DICTATION}
+					<CommonDictationSettings onChanged={refreshCommonConnections} />
+				{:else if currentSection.slug === SETTINGS_SECTION_SLUGS.TOOLS}
+					<div class="space-y-5">
+						<CommonTools />
+						<CommonMcp onChanged={refreshCommonConnections} />
+					</div>
+				{:else if currentSection.slug === SETTINGS_SECTION_SLUGS.INFO}
+					<CommonInfo />
+				{:else if currentSection.slug === SETTINGS_SECTION_SLUGS.IMPORT_EXPORT}
+					<SettingsChatImportExportTab />
+				{:else if currentSection.fields}
+					<div class="space-y-6">
+						<SettingsChatFields
+							fields={currentSection.fields.filter((field) => field.key !== 'apiKey' && field.key !== 'mcpServers')}
+							{localConfig}
+							onConfigChange={handleConfigChange}
+							onThemeChange={handleThemeChange}
+						/>
+						{#if currentSection.slug === SETTINGS_SECTION_SLUGS.GENERAL}
+							<Button onclick={() => window.location.reload()} variant="ghost" size="sm">
+								<RefreshCw class="h-3 w-3" />
+								Reload app
+							</Button>
+						{/if}
+					</div>
+				{/if}
 			</div>
-
-			<SettingsFooter onReset={handleReset} onSave={handleSave} />
 		</div>
+		{#if preferenceSection}
+			<SettingsFooter onReset={handleReset} onSave={handleSave} />
+		{/if}
 	</div>
 </div>

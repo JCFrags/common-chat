@@ -4,8 +4,11 @@ import { SETTINGS_KEYS } from './settings-keys.constants';
 import { TITLE_GENERATION } from './title-generation.constants';
 import { FILE_GLOB_SEARCH_PICKERS } from './working-directory.constants';
 import {
+	Cable,
 	Code,
 	Database,
+	Info,
+	Mic,
 	Funnel,
 	ListRestart,
 	Monitor,
@@ -28,16 +31,22 @@ import type {
 /** Settings sections — slug is the routing identity, title is the display label. */
 export const SETTINGS_SECTIONS = {
 	AGENTIC: { slug: 'agentic', title: 'Agentic' },
+	CONNECTIONS: { slug: 'connections', title: 'Connections' },
+	DICTATION: { slug: 'dictation', title: 'Dictation' },
+	INFO: { slug: 'info', title: 'Info' },
 	DEVELOPER: { slug: 'developer', title: 'Developer' },
 	DISPLAY: { slug: 'display', title: 'Display' },
 	GENERAL: { slug: 'general', title: 'General' },
-	IMPORT_EXPORT: { slug: 'import-export', title: 'Import/Export' },
-	SAMPLING_PENALTIES: { slug: 'sampling-penalties', title: 'Sampling & Penalties' },
+	IMPORT_EXPORT: { slug: 'import-export', title: 'Data' },
+	SAMPLING_PENALTIES: { slug: 'sampling-penalties', title: 'Sampling' },
 	TOOLS: { slug: 'tools', title: 'Tools' }
 } as const;
 
 export const SETTINGS_SECTION_SLUGS = {
 	AGENTIC: SETTINGS_SECTIONS.AGENTIC.slug,
+	CONNECTIONS: SETTINGS_SECTIONS.CONNECTIONS.slug,
+	DICTATION: SETTINGS_SECTIONS.DICTATION.slug,
+	INFO: SETTINGS_SECTIONS.INFO.slug,
 	DEVELOPER: SETTINGS_SECTIONS.DEVELOPER.slug,
 	DISPLAY: SETTINGS_SECTIONS.DISPLAY.slug,
 	GENERAL: SETTINGS_SECTIONS.GENERAL.slug,
@@ -48,6 +57,9 @@ export const SETTINGS_SECTION_SLUGS = {
 
 export const SETTINGS_SECTION_TITLES = {
 	AGENTIC: SETTINGS_SECTIONS.AGENTIC.title,
+	CONNECTIONS: SETTINGS_SECTIONS.CONNECTIONS.title,
+	DICTATION: SETTINGS_SECTIONS.DICTATION.title,
+	INFO: SETTINGS_SECTIONS.INFO.title,
 	DEVELOPER: SETTINGS_SECTIONS.DEVELOPER.title,
 	DISPLAY: SETTINGS_SECTIONS.DISPLAY.title,
 	GENERAL: SETTINGS_SECTIONS.GENERAL.title,
@@ -306,6 +318,19 @@ export const SETTINGS_REGISTRY: SettingsSectionEntry[] = [
 		],
 		slug: SETTINGS_SECTION_SLUGS.DISPLAY,
 		title: SETTINGS_SECTION_TITLES.DISPLAY
+	},
+	// Common API forms own their confirmed saves, not device preferences.
+	{
+		icon: Cable,
+		settings: [],
+		slug: SETTINGS_SECTION_SLUGS.CONNECTIONS,
+		title: SETTINGS_SECTION_TITLES.CONNECTIONS
+	},
+	{
+		icon: Mic,
+		settings: [],
+		slug: SETTINGS_SECTION_SLUGS.DICTATION,
+		title: SETTINGS_SECTION_TITLES.DICTATION
 	},
 	// MCP Servers (non-UI config object)
 	{
@@ -635,6 +660,12 @@ export const SETTINGS_REGISTRY: SettingsSectionEntry[] = [
 		],
 		slug: SETTINGS_SECTION_SLUGS.DEVELOPER,
 		title: SETTINGS_SECTION_TITLES.DEVELOPER
+	},
+	{
+		icon: Info,
+		settings: [],
+		slug: SETTINGS_SECTION_SLUGS.INFO,
+		title: SETTINGS_SECTION_TITLES.INFO
 	}
 ];
 

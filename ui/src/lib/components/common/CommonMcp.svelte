@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Button } from '$lib/components/ui/button';
+	import { Checkbox } from '$lib/components/ui/checkbox';
 	import { Input } from '$lib/components/ui/input';
 	import { commonMcpState, type McpConnection } from '$lib/services/common-mcp.svelte';
 	import { errorText } from './api';
@@ -15,7 +16,7 @@
 	let error = $state('');
 	let status = $state('');
 	const connection = $derived(commonMcpState.connections.find((item) => item.id === selectedId));
-	const selectClass = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm focus-visible:outline-ring';
+	const selectClass = 'h-9 w-full rounded-lg border border-input bg-background/50 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
 	function fill(id: string) {
 		if (id) commonMcpState.clear(id);
@@ -93,16 +94,15 @@
 </script>
 
 <section class="space-y-4" aria-label="Common MCP connections">
-	<p class="text-sm text-muted-foreground">
-		Model Context Protocol (MCP) connects remote tools to Common. Connections and encrypted bearer
-		keys stay on the server. Saving or loading this list does not contact an MCP server. Connect
-		and discovery are explicit. Connections are inactive after a server restart.
-	</p>
-	<p class="text-sm text-muted-foreground">
-		Remote tools use their server's permissions, not Common's isolated runner. Review the endpoint
-		and each tool before use. Selected tools need a separate confirmation for every new turn or
-		regeneration. Native tools remain automatic on compatible connections.
-	</p>
+	<h3 class="text-sm font-medium">MCP connections</h3>
+	<details class="rounded-xl border border-border/30 bg-muted/20 p-3">
+		<summary class="cursor-pointer text-sm font-medium">MCP help and access limits</summary>
+		<div class="mt-3 space-y-3 text-sm text-muted-foreground">
+			<p>Model Context Protocol (MCP) connects remote tools to Common. Connections and encrypted bearer keys stay on the server. Saving or loading this list does not contact an MCP server. Connect and discovery are explicit. Connections are inactive after a server restart.</p>
+			<p>Remote tools use their server's permissions, not Common's isolated runner. Review the endpoint and each tool before use. Selected tools need a separate confirmation for every new turn or regeneration. Native tools remain automatic on compatible connections.</p>
+			<p>Protocol 2025-11-25 only. Use HTTPS or HTTP loopback. URL credentials, query strings, redirects, OAuth, stdio, browser execution, prompts, and resources are not supported.</p>
+		</div>
+	</details>
 	<div class="flex items-end gap-2">
 		<label class="grid flex-1 gap-1 text-sm">Saved connection
 			<select class={selectClass} value={selectedId} disabled={busy} onchange={(e) => fill(e.currentTarget.value)}>
@@ -110,20 +110,16 @@
 				{#each commonMcpState.connections as item}<option value={item.id}>{item.name}</option>{/each}
 			</select>
 		</label>
-		<Button variant="ghost" disabled={busy} onclick={refresh}>Reload saved state</Button>
+		<Button variant="ghost" disabled={busy} onclick={refresh}>Reload</Button>
 	</div>
-	<form class="space-y-3" onsubmit={(e) => { e.preventDefault(); void save(); }}>
+	<form class="space-y-3 rounded-xl border border-border/30 bg-muted/20 p-4" onsubmit={(e) => { e.preventDefault(); void save(); }}>
 		<fieldset disabled={busy} class="space-y-3">
 			<div class="grid gap-3 sm:grid-cols-2">
 				<label class="grid gap-1 text-sm">Name<Input bind:value={name} required maxlength={100} autocomplete="off" /></label>
 				<label class="grid gap-1 text-sm">Streamable HTTP endpoint<Input bind:value={url} type="url" required maxlength={500} placeholder="https://example.org/mcp" autocomplete="off" /></label>
 			</div>
 			<label class="grid gap-1 text-sm">Bearer key<Input bind:value={key} type="password" maxlength={8000} autocomplete="new-password" placeholder={connection?.hasKey ? 'A key is saved. Leave blank to retain it.' : 'Optional bearer key'} /></label>
-			<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={clearKey} /> Explicitly clear the saved key</label>
-			<p class="text-xs text-muted-foreground">
-				Protocol 2025-11-25 only. Use HTTPS or HTTP loopback. URL credentials, query strings,
-				redirects, OAuth, stdio, browser execution, prompts, and resources are not supported.
-			</p>
+			<label class="flex items-center gap-2 text-sm"><Checkbox bind:checked={clearKey} aria-label="Clear saved MCP key" /> Clear saved key</label>
 			<div class="flex flex-wrap gap-2">
 				<Button type="submit">Save inactive connection</Button>
 				{#if connection}<Button variant="ghost" onclick={remove}>Delete connection</Button>{/if}
@@ -133,7 +129,7 @@
 	{#if error}<p role="alert" class="text-sm text-destructive">{error}</p>{/if}
 	{#if status}<p role="status" class="text-sm">{status}</p>{/if}
 	{#each commonMcpState.connections as item (item.id)}
-		<section class="space-y-3 rounded-lg border p-3" aria-label={`MCP connection ${item.name}`}>
+		<section class="space-y-3 rounded-xl border border-border/30 bg-muted/20 p-4" aria-label={`MCP connection ${item.name}`}>
 			<div class="flex flex-wrap items-center gap-2">
 				<h3 class="flex-1 text-sm font-medium">{item.name}</h3>
 				<span class="text-xs">{item.connected ? 'Connected' : 'Inactive'}</span>
@@ -146,9 +142,9 @@
 				<p class="text-xs text-muted-foreground">Catalog checked {item.checkedAt ? new Date(item.checkedAt).toLocaleString() : 'at an unknown time'}. These choices are page-only, not standing permission.</p>
 				{#if !item.tools.length}<p class="text-sm">The server returned no tools.</p>{/if}
 				{#each item.tools as tool (tool.name)}
-					<div class="space-y-2 rounded-md border p-3">
+					<div class="space-y-2 rounded-xl border border-border/30 bg-background/50 p-3">
 						<label class="flex items-start gap-2 text-sm">
-							<input type="checkbox" class="mt-1" disabled={busy || !tool.available} checked={commonMcpState.selections.some((selection) => selection.connectionId === item.id && selection.catalogRevision === item.catalogRevision && selection.tools.includes(tool.name))} onchange={(e) => choose(item.id, tool.name, e.currentTarget.checked)} />
+							<Checkbox class="mt-1" aria-label={`Select MCP tool ${tool.title || tool.name}`} disabled={busy || !tool.available} checked={commonMcpState.selections.some((selection) => selection.connectionId === item.id && selection.catalogRevision === item.catalogRevision && selection.tools.includes(tool.name))} onCheckedChange={(checked) => choose(item.id, tool.name, checked)} />
 							<span><span class="font-medium">{tool.title}</span> <code>{tool.name}</code></span>
 						</label>
 						<p class="whitespace-pre-wrap break-words text-sm">{tool.description || 'No description was supplied.'}</p>

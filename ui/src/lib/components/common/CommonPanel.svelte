@@ -2,21 +2,17 @@
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { onMount, tick, untrack } from 'svelte';
-	import CommonConnections from './CommonConnections.svelte';
-	import CommonDictationSettings from './CommonDictationSettings.svelte';
+	import { FolderOpen, Terminal } from '@lucide/svelte';
 	import CommonFiles from './CommonFiles.svelte';
 	import CommonRun from './CommonRun.svelte';
-	import CommonTools from './CommonTools.svelte';
-	import CommonMcp from './CommonMcp.svelte';
 	import { createWorkspaceSession, dirtyFile, type WorkspaceSession } from './workspace-state';
 	import { errorText } from './api';
 
-	type Section = 'connections' | 'dictation' | 'tools' | 'files' | 'run';
+	type Section = 'files' | 'run';
 	interface Props {
 		conversationId: string | null;
 		ensureConversation: () => Promise<string>;
 		onChanged?: () => Promise<void> | void;
-		onConnectionsChanged?: () => Promise<void> | void;
 		open?: boolean;
 		showTrigger?: boolean;
 		initialSection?: Section;
@@ -25,7 +21,6 @@
 		conversationId,
 		ensureConversation,
 		onChanged = () => {},
-		onConnectionsChanged = () => {},
 		open = $bindable(false),
 		showTrigger = true,
 		initialSection = 'files'
@@ -119,37 +114,26 @@
 			variant="ghost"
 			size="sm"
 			aria-haspopup="dialog"
-			onclick={() => (open = true)}>Common tools and settings</Button
+			onclick={() => (open = true)}>Files and code</Button
 		>{/if}
 	<Dialog.Content
-		class="w-[min(72rem,calc(100vw-1rem))]! max-w-[calc(100vw-1rem)]! max-h-[calc(100dvh-1rem)]! p-4 sm:p-6"
+		showCloseButton
+		class="flex w-[min(72rem,calc(100vw-2rem))]! max-w-[calc(100vw-2rem)]! max-h-[calc(100dvh-2rem)]! flex-col overflow-hidden rounded-2xl bg-background/95 p-4 shadow-xl backdrop-blur-xl sm:p-6"
 	>
-		<Dialog.Header
-			><div class="flex items-center justify-between gap-2">
-				<Dialog.Title>Common tools and settings</Dialog.Title><Button
-					variant="ghost"
-					size="sm"
-					onclick={() => (open = false)}>Close</Button
-				>
-			</div>
-			<Dialog.Description
-				>Server-owned connections, speech selection, and conversation-scoped files and isolated
-				operations.</Dialog.Description
-			></Dialog.Header
-		>
-		<nav class="flex flex-wrap gap-1" aria-label="Common panel sections">
-			{#each [['connections', 'Connections'], ['dictation', 'Dictation'], ['tools', 'Tools and MCP'], ['files', 'Files'], ['run', 'Run and packages']] as [value, label]}<Button
-					variant={section === value ? 'secondary' : 'ghost'}
-					size="sm"
-					aria-current={section === value ? 'page' : undefined}
-					onclick={() => (section = value as Section)}>{label}</Button
-				>{/each}
+		<Dialog.Header showCloseButton={false} class="shrink-0 pr-8">
+			<Dialog.Title>Files and code</Dialog.Title>
+			<Dialog.Description class="sr-only">Conversation files, code review, isolated runs, and packages. Closing this panel stops polling, not server work.</Dialog.Description>
+		</Dialog.Header>
+		<nav class="flex w-fit shrink-0 gap-1 rounded-full bg-muted/30 p-1" aria-label="Workspace sections">
+			<Button class="rounded-full" variant={section === 'files' ? 'secondary' : 'ghost'} size="sm" aria-current={section === 'files' ? 'page' : undefined} onclick={() => (section = 'files')}>
+				<FolderOpen class="size-3.5" /> Files
+			</Button>
+			<Button class="rounded-full" variant={section === 'run' ? 'secondary' : 'ghost'} size="sm" aria-current={section === 'run' ? 'page' : undefined} onclick={() => (section = 'run')}>
+				<Terminal class="size-3.5" /> Run
+			</Button>
 		</nav>
-		<div class="min-w-0">
-			{#if section === 'connections'}<CommonConnections onChanged={onConnectionsChanged} />
-			{:else if section === 'dictation'}<CommonDictationSettings onChanged={onConnectionsChanged} />
-			{:else if section === 'tools'}<div class="space-y-6 max-h-[60dvh] overflow-auto pr-1"><CommonTools /><CommonMcp /></div>
-			{:else if cid && session}
+		<div class="min-h-0 min-w-0 overflow-y-auto overscroll-contain">
+			{#if cid && session}
 				{#if section === 'files'}<CommonFiles
 						bind:this={filesRef}
 						conversationId={cid}

@@ -81,21 +81,23 @@
 	onMount(() => {
 		void load();
 	});
-	const selectClass = 'h-9 w-full rounded-md border border-input bg-background px-3 text-sm';
+	const selectClass = 'h-9 w-full rounded-lg border border-input bg-background/50 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 </script>
 
 <section class="space-y-4" aria-label="Speech-to-text selection">
-	<p class="text-sm text-muted-foreground">
-		Dictation uses a saved speech connection and model, independent of the chat selection. The
-		service must support /audio/transcriptions. Catalogs and chat audio capabilities do not prove
-		that support.
-	</p>
+	<details class="rounded-xl border border-border/30 bg-muted/20 p-3">
+		<summary class="cursor-pointer text-sm font-medium">Dictation help</summary>
+		<div class="mt-3 space-y-3 text-sm text-muted-foreground">
+			<p>Dictation uses a saved speech connection and model, independent of the chat selection. The service must support /audio/transcriptions. Catalogs and chat audio capabilities do not prove that support.</p>
+			<p>Audio is sent only after you review a clip and select Transcribe. Saved keys stay on the server. The provider can apply its own retention and billing rules.</p>
+		</div>
+	</details>
 	<form
 		onsubmit={(e) => {
 			e.preventDefault();
 			void save();
 		}}
-		class="space-y-3"
+		class="space-y-4 rounded-xl border border-border/30 bg-muted/20 p-4"
 	>
 		<label class="grid gap-1 text-sm"
 			>Speech connection<select
@@ -134,26 +136,22 @@
 				autocomplete="off"
 			/></label
 		>
-		<p class="text-sm" role="status">
+		{#if loading || catalogStatus}<p class="text-xs text-muted-foreground" role="status">
 			{loading ? 'Loading speech selection and model catalog...' : catalogStatus}
-		</p>
+		</p>{/if}
 		<div class="flex flex-wrap gap-2">
 			<Button type="submit" disabled={saving || !providerId || !model.trim()}
-				>{saving ? 'Saving...' : 'Save dictation pair'}</Button
+				>{saving ? 'Saving...' : 'Save dictation'}</Button
 			><Button
 				variant="ghost"
 				disabled={!providerId || loading || saving}
-				onclick={() => loadCatalog(true)}>Refresh catalog</Button
+				onclick={() => loadCatalog(true)}>Refresh</Button
 			><Button variant="ghost" disabled={saving} onclick={() => save(true)}
-				>Disable dictation</Button
-			><Button variant="ghost" disabled={saving || loading} onclick={load}>Reload saved pair</Button
+				>Disable</Button
+			><Button variant="ghost" disabled={saving || loading} onclick={load}>Reload</Button
 			>
 		</div>
 	</form>
 	{#if error}<p class="text-sm text-destructive" role="alert">{error}</p>{/if}
 	{#if status}<p class="text-sm" role="status">{status}</p>{/if}
-	<p class="text-xs text-muted-foreground">
-		Audio is sent only after you review a clip and select Transcribe. Saved keys stay on the server.
-		The provider can apply its own retention and billing rules.
-	</p>
 </section>

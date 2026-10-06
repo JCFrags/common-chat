@@ -51,12 +51,6 @@
 		} catch (error) { loginError = error instanceof Error ? error.message : String(error); }
 		finally { signingIn = false; }
 	}
-	async function signOut() {
-		try {
-			await commonStore.logout();
-			draftMessagesStore.clearAll();
-		} catch (error) { loginError = error instanceof Error ? error.message : String(error); }
-	}
 
 	let innerHeight = $state<number | undefined>();
 	let innerWidth = $state(browser ? window.innerWidth : 0);
@@ -226,11 +220,7 @@
 			{#if draftMessagesStore.warning}<p role="status">{draftMessagesStore.warning}</p>{/if}
 		</form>
 	{:else}
-		<div class="flex items-center justify-between gap-2 px-4 py-2 text-sm">
-			<span>Common{commonStore.session.authenticationRequired === false ? ' · Trusted local access' : ''}</span>
-			{#if commonStore.session.authenticationRequired !== false}<button type="button" class="underline" onclick={signOut}>Sign out and clear device drafts</button>{/if}
-		</div>
-		{#if commonStore.connectionError}<p class="px-4 text-sm" role="status">{commonStore.connectionError}</p>{/if}
+		{#if commonStore.connectionError}<p class="fixed top-2 right-4 z-20 max-w-md rounded-xl border border-border/30 bg-background/95 px-4 py-2 text-sm shadow-sm backdrop-blur-md" role="status">{commonStore.connectionError}</p>{/if}
 	<div class="flex flex-col md:flex-row">
 		<SidebarNavigation
 			onSearchClick={() => {

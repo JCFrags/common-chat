@@ -11,8 +11,8 @@
 	let { isActive, onSectionChange, sections }: Props = $props();
 </script>
 
-<div class="sticky top-12 hidden w-64 flex-col self-start bg-background md:flex gap-6">
-	<nav class="space-y-1">
+<div class="hidden w-52 shrink-0 flex-col overflow-y-auto border-r border-border/30 bg-muted/20 p-3 md:flex">
+	<nav class="space-y-1" aria-label="Settings sections">
 		{#each sections as section (section.title)}
 			<button
 				class="flex w-full cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-accent {isActive(
@@ -20,11 +20,12 @@
 				)
 					? 'bg-accent text-accent-foreground'
 					: 'text-muted-foreground'}"
+				aria-current={isActive(section) ? 'page' : undefined}
 				onclick={() => onSectionChange?.(section.title)}
 			>
 				<section.icon class={ICON_CLASS_DEFAULT} />
 
-				<span class="ml-2">{section.title}</span>
+				<span>{section.title}</span>
 			</button>
 		{/each}
 	</nav>
